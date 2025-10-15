@@ -1,0 +1,58 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Archive active docs after commit
+timestamp=$(date +"%Y-%m-%d")
+archive_dir="docs/archived/$timestamp"
+
+if [ -d "docs/_active" ] && [ "$(ls -A docs/_active)" ]; then
+  mkdir -p "$archive_dir"
+  cp -r docs/_active/* "$archive_dir/"
+  echo "Archived active docs to $archive_dir"
+
+  # Reset planning template
+  cat > docs/_active/planning.md << 'EOF'
+# Planning: [Feature Name]
+
+**Date**: YYYY-MM-DD
+
+## Goal
+
+What are we building and why?
+
+---
+
+## Technical Approach
+
+...
+
+---
+
+## Questions & Open Issues
+
+- [ ] Question 1?
+- [ ] Question 2?
+EOF
+
+  # Reset execution template
+  cat > docs/_active/execution.md << 'EOF'
+# Execution: [Feature Name]
+
+**Date**: YYYY-MM-DD
+
+## Task Checklist
+
+- [ ] Task 1
+- [ ] Task 2
+
+## Progress Log
+
+### YYYY-MM-DD
+
+- Started work on...
+EOF
+
+  git add "docs/archived/$timestamp"
+  git add docs/_active/*
+  echo "Reset active docs templates"
+fi
