@@ -1,6 +1,6 @@
 """OpenRouter API client for AI features."""
 
-import httpx
+from openai import OpenAI
 
 from app.config import settings
 
@@ -11,32 +11,27 @@ class OpenRouterClient:
     def __init__(self):
         self.api_key = settings.openrouter_api_key
         self.model = settings.openrouter_model
-        self.base_url = "https://openrouter.ai/api/v1"
+        self.client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=self.api_key,
+        )
 
     async def generate(self, prompt: str, max_tokens: int = 1000) -> str:
         """Generate text using OpenRouter API."""
         if not self.api_key:
             raise ValueError("OpenRouter API key not configured")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": max_tokens,
-                },
-                timeout=30.0,
-            )
+        completion = self.client.chat.completions.create(
+            extra_headers={
+                "HTTP-Referer": "https://tarregasheets.com",
+                "X-Title": "TarregaSheets",
+            },
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+        )
 
-            response.raise_for_status()
-            data = response.json()
-
-            return data["choices"][0]["message"]["content"]
+        return completion.choices[0].message.content
 
 
 # Global client instance

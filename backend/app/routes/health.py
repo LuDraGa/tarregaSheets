@@ -4,7 +4,10 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.config import settings
 from app.db.connection import get_database
-from app.services.openrouter import openrouter_client
+from rich.console import Console
+from openai import OpenAI
+
+console = Console()
 
 router = APIRouter()
 
@@ -31,29 +34,64 @@ async def check_database():
 @router.get("/openrouter")
 async def check_openrouter():
     """Check OpenRouter API connection."""
+
     try:
         if not settings.openrouter_api_key:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="OpenRouter API key not configured",
-            )
+            return {
+                "status": "unhealthy",
+                "service": "openrouter",
+                "error": "OpenRouter API key not configured",
+            }
 
-        # Test with a simple prompt
-        response = await openrouter_client.generate(
-            "Say 'OK' if you can read this.", max_tokens=10
+        # Initialize OpenAI client with OpenRouter
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=settings.openrouter_api_key,
         )
+
+        console.print("completion")
+        # Test with a simple prompt
+        completion = client.chat.completions.create(
+            model=settings.openrouter_model,
+            messages=[{"role": "user", "content": "What is life?"}],
+        )
+        console.print("My name is khan")
+        console.print(completion)
+        console.print(completion.choices[0].message.content)
 
         return {
             "status": "healthy",
             "service": "openrouter",
             "model": settings.openrouter_model,
-            "response": response[:50],  # First 50 chars
+            "response": completion.choices[0].message.content[:50],
         }
+
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"OpenRouter API connection failed: {str(e)}",
-        )
+        error_msg = str(e)
+        console.print(settings.openrouter_api_key)
+        console.print(settings.openrouter_model)
+        console.print(e)
+        # Check for rate limiting
+        if "429" in error_msg or "rate limit" in error_msg.lower():
+            return {
+                "status": "unhealthy",
+                "service": "openrouter",
+                "error": "Rate limited (429). Please wait before retrying. This is normal for free tier.",
+            }
+
+        # Check for timeout
+        if "timeout" in error_msg.lower():
+            return {
+                "status": "unhealthy",
+                "service": "openrouter",
+                "error": "Request timeout - OpenRouter may be slow or unavailable",
+            }
+
+        return {
+            "status": "unhealthy",
+            "service": "openrouter",
+            "error": f"Connection failed: {error_msg[:100]}",
+        }
 
 
 @router.get("/models")

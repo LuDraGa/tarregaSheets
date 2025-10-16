@@ -105,3 +105,77 @@ async def delete_piece(piece_id: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
 
     return None
+
+
+@router.post("/{piece_id}/versions", response_model=Piece, status_code=status.HTTP_201_CREATED)
+async def add_version(piece_id: str, version_data: dict):
+    """
+    Add a new version to a piece.
+
+    Expected version_data:
+    {
+        "file_id": "gridfs_file_id",
+        "midi_file_id": "gridfs_midi_file_id",
+        "source_type": "musicxml",
+        "metadata": {...}
+    }
+    """
+    from uuid import uuid4
+
+    from app.models.piece import Asset, Version
+
+    db = get_database()
+
+    # Check if piece exists
+    piece = await db.pieces.find_one({"id": piece_id})
+    if not piece:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
+
+    # Create version
+    version_id = str(uuid4())
+    metadata = version_data.get("metadata", {})
+
+    # Create assets for MusicXML and MIDI
+    assets = []
+
+    # MusicXML asset
+    if "file_id" in version_data:
+        assets.append(
+            Asset(
+                id=version_data["file_id"],
+                kind=version_data.get("source_type", "musicxml"),
+                url=f"/files/{version_data['file_id']}",
+                filename=version_data.get("filename", "score.xml"),
+            )
+        )
+
+    # MIDI asset
+    if "midi_file_id" in version_data:
+        midi_filename = version_data.get("filename", "score").rsplit(".", 1)[0] + ".mid"
+        assets.append(
+            Asset(
+                id=version_data["midi_file_id"],
+                kind="midi",
+                url=f"/files/{version_data['midi_file_id']}",
+                filename=midi_filename,
+            )
+        )
+
+    version = Version(
+        id=version_id,
+        piece_id=piece_id,
+        source_type=version_data.get("source_type", "musicxml"),
+        tempo=metadata.get("tempo", 120),
+        key=metadata.get("key", "C"),
+        time_signature=metadata.get("time_signature", "4/4"),
+        assets=assets,
+    )
+
+    # Add version to piece
+    await db.pieces.update_one(
+        {"id": piece_id}, {"$push": {"versions": version.model_dump()}}
+    )
+
+    # Return updated piece
+    updated_piece = await db.pieces.find_one({"id": piece_id})
+    return Piece(**updated_piece)

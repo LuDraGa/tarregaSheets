@@ -34,9 +34,13 @@ class Settings(BaseSettings):
         "application/vnd.recordare.musicxml+xml",
         "application/vnd.recordare.musicxml",
         "application/x-compressed",
+        "application/xml",
+        "text/xml",
+        "application/octet-stream",  # Browsers often detect .musicxml as octet-stream
         "audio/midi",
         "audio/x-midi",
     ]
+    allowed_file_extensions: list[str] = [".xml", ".musicxml", ".mxl", ".mid", ".midi"]
 
     model_config = SettingsConfigDict(
         # Look for .env in project root (one level up from backend/)

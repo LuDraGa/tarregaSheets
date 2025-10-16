@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-do
 import HomePage from './pages/HomePage'
 import LibraryPage from './pages/LibraryPage'
 import PracticePage from './pages/PracticePage'
+import PracticePageAlphaTab from './pages/PracticePageAlphaTab'
 import UploadPage from './pages/UploadPage'
 import SettingsPage from './pages/SettingsPage'
 import HealthCheckPage from './pages/HealthCheckPage'
@@ -22,6 +23,7 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/library" element={<LibraryPage />} />
             <Route path="/practice/:id" element={<PracticePage />} />
+            <Route path="/practice/:id/alphatab" element={<PracticePageAlphaTab />} />
             <Route path="/upload" element={<UploadPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/health" element={<HealthCheckPage />} />

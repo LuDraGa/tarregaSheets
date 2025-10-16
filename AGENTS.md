@@ -49,6 +49,23 @@ npm run dev    # Starts Vite on port 5173
 ```
 ⚠️ **Agents**: Prompt user to run frontend dev server; do NOT start it yourself.
 
+### 🚨 CRITICAL: Server Management Policy
+
+**NEVER start, restart, or stop development servers without explicitly asking the user first.**
+
+This includes:
+- Backend server (`uvicorn`, `fastapi dev`)
+- Frontend server (`npm run dev`, `vite`)
+- Database servers (MongoDB, Redis, etc.)
+- Any background processes or daemons
+
+**Why**: The user manages all server processes in their own terminal sessions and has specific workflows for monitoring logs, debugging, and managing multiple processes.
+
+**What agents should do**:
+- Suggest when a restart may be needed (e.g., "You may need to restart the backend to pick up these changes")
+- Ask for permission before running any command that would start/stop servers
+- Never use `run_in_background` parameter for server commands
+
 ### Quality Gates (agents may run when appropriate)
 
 **Backend** (from `backend/` directory):

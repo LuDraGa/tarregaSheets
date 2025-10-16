@@ -23,6 +23,11 @@ TarregaSheets is a guitar practice platform with:
   - Agents can suggest `npm install` when dependencies change
 - **No root package.json**: This is a monorepo with independent backend (Python) and frontend (Node) workspaces
 
+**CRITICAL: Server Management**:
+- **NEVER start or restart development servers** (backend, frontend, database, etc.) without explicitly asking the user first
+- User manages all server processes themselves
+- Agents should only suggest when a restart may be needed, not execute it
+
 **Backend** (from `backend/` directory - USER RUNS THESE):
 ```bash
 # User activates uv virtual environment first
@@ -167,39 +172,118 @@ tarregaSheets/
 
 ALL significant development work MUST follow this workflow:
 
-1. **Begin with Planning**: Create `docs/_active/planning.md`
-   - Document the "why" behind decisions
-   - Explore design alternatives and get user approval
-   - Include API contracts, data models, UX flows
+1. **Begin with Planning**: Update `docs/_active/planning.md` (lean 1-page format)
+   - Start with TL;DR (≤3 bullets): what, why, success metric
+   - Define Goals/Non-Goals and Scope (In/Out)
+   - Sketch architecture (1 paragraph + ASCII diagram)
+   - List top 3 risks with mitigations
+   - Add open questions with owners
+   - Set success metrics & rough timeline
+   - Link to annexes ONLY if needed (detailed context, complex models, diagrams)
 
-2. **Move to Execution**: Create `docs/_active/execution.md`
+2. **Move to Execution**: Update `docs/_active/execution.md`
    - List concrete implementation tasks with status indicators
    - Track completion status in real-time
-   - Update as you discover new tasks
+   - Log decisions made during implementation
+   - Record bugs/fixes, code locations, lessons learned
 
-3. **Post-Commit**: Husky hook archives both to `docs/archived/YYYY-MM-DD/`
+3. **Update Planning During Execution**:
+   - Add decisions to Decisions Log (with date & 1-way/2-way flag)
+   - Mark open questions as resolved
+   - Add new risks if discovered
+   - Keep the 1-pager current (don't let it go stale!)
+
+4. **Create Annexes Only When Needed**:
+   - `docs/features/[feature-name]/context.md` - Detailed background, user research
+   - `docs/features/[feature-name]/models.md` - Full Pydantic/TS schemas
+   - `docs/features/[feature-name]/diagrams.md` - Sequence diagrams, C4 models
+   - Link annexes from planning.md "Optional Annexes" section
+
+5. **Post-Commit**: Husky hook archives both to `docs/archived/YYYY-MM-DD/`
+
+### Workflow Benefits
+
+✅ **planning.md stays lean (1 page)** - Easy to scan, quick to update
+✅ **Cross-session continuity** - New agents/humans get up to speed fast
+✅ **Decision tracking** - Decisions Log captures "why" with dates
+✅ **Opt-in detail** - Deep specs in annexes, not cluttering main doc
+✅ **Human-friendly** - Designed for quick human updates between sessions
+
+**Read `docs/_active/README.md` for full documentation structure details.**
 
 ### Example Planning Doc
 
 ```markdown
 # Planning: Add PDF Upload Support
 
-## Goal
-Allow users to upload PDF sheet music and parse it into playable format.
+**Date**: 2025-01-16 · **Owner**: Team · **Status**: In Review
 
-## Approach
-- Use pdf2image to convert PDF pages to images
-- Use OMR (Optical Music Recognition) library or AI model
-- Fall back to manual bar alignment if parsing fails
+## 1) TL;DR (≤3 bullets)
 
-## API Contract
-POST /upload
-Request: multipart/form-data with PDF file
-Response: { piece_id, version_id, parse_status }
+* Add PDF upload to allow users to import scanned sheet music
+* Enables practice for users who only have PDF files (no MusicXML)
+* Success: 80% of uploaded PDFs parse successfully with minimal manual fixes
 
-## Questions
-- Which OMR library? (Audiveris vs AI model)
-- Storage: MongoDB GridFS or S3?
+## 2) Goals / Non-Goals
+
+* **Goals:** Upload PDF → parse to MusicXML → render staff + TAB
+* **Non-Goals:** Handwriting recognition, chord detection (Phase 2)
+
+## 3) Scope (In / Out)
+
+* **In:** Multi-page PDFs, OMR library integration, manual alignment fallback
+* **Out:** Real-time preview during upload, AI-based correction
+
+## 4) Architecture (One paragraph + ASCII)
+
+User uploads PDF via frontend → backend splits pages with pdf2image → OMR library parses staff/notes → converts to internal JSON → stores in MongoDB → frontend renders with OSMD.
+
+```
+User → FE (Upload) → API (POST /upload) → pdf2image → OMR → JSON → MongoDB → FE (OSMD)
+```
+
+## 5) Contract Snapshot (stable bits only)
+
+```
+POST /api/upload  v1
+Req: multipart/form-data (file: PDF)
+200: { "piece_id":"abc123", "parse_status":"success", "pages_parsed":3 }
+Errors: INVALID_FILE | PARSE_FAILED | FILE_TOO_LARGE
+```
+
+## 6) Risks & Mitigations (Top 3)
+
+| Risk                  | Mitigation                         |
+| --------------------- | ---------------------------------- |
+| OMR parsing errors    | Manual alignment UI as fallback    |
+| Large file upload     | Limit to 10MB, async processing    |
+| Storage costs (GridFS)| Evaluate S3 if >100 uploads/month  |
+
+## 7) Decisions Log
+
+| Date       | Decision              | Type (1-way/2-way) | Why/Link     |
+| ---------- | --------------------- | ------------------ | ------------ |
+| 2025-01-16 | Use Audiveris for OMR | 2-way              | Can swap later if accuracy is low |
+| 2025-01-16 | MongoDB GridFS first  | 2-way              | S3 if needed |
+
+## 8) Open Questions (with owners)
+
+* [ ] Which OMR library? Audiveris vs AI model — **Owner:** Backend lead — **Due:** 2025-01-18
+* [ ] Storage limit per user? — **Owner:** Product — **Due:** TBD
+
+## 9) Success Metrics
+
+* ≥80% parse success rate · Upload + parse <5s · ≤5% manual alignment needed
+
+## 10) Timeline (plan, not commitment)
+
+* Research OMR: 0.5d · Backend upload: 1d · Frontend UI: 0.5d · Testing: 0.5d
+
+---
+
+### Optional Annexes (link only when needed)
+
+* **Annex A: OMR Library Comparison** → [context.md](/docs/features/pdf-upload/context.md)
 ```
 
 ## File Conventions

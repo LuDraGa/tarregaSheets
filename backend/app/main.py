@@ -44,8 +44,9 @@ async def health_check():
 
 
 # Include routers
-from app.routes import health
+from app.routes import files, health
 
 app.include_router(pieces.router, prefix="/pieces", tags=["pieces"])
 app.include_router(upload.router, prefix="/upload", tags=["upload"])
+app.include_router(files.router, prefix="/files", tags=["files"])
 app.include_router(health.router, prefix="/health", tags=["health"])
