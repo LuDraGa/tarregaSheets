@@ -47,7 +47,6 @@ def parse_musicxml(file_content: bytes, filename: str = "score.xml") -> tuple[di
             stream = converter.parse(tmp_path)
 
             # Extract metadata
-            # Extract metadata
             metadata = {
                 "title": _get_title(stream),
                 "composer": _get_composer(stream),
@@ -55,6 +54,8 @@ def parse_musicxml(file_content: bytes, filename: str = "score.xml") -> tuple[di
                 "key": _get_key(stream),
                 "time_signature": _get_time_signature(stream),
                 "has_tablature": _check_tablature(stream),
+                "has_staff_notation": _check_staff_notation(stream),
+                "notation_type": detect_notation_type(stream),
             }
 
             # Re-export cleaned MusicXML (this normalizes the file for OSMD compatibility)
@@ -201,6 +202,13 @@ def _sanitize_musicxml(xml_content: bytes) -> bytes:
             text,
         )
 
+    if 'repeat direction="backward"' in text and 'repeat direction="forward"' not in text:
+        text = text.replace(
+            '<barline location="left">',
+            '<barline location="left">\n        <repeat direction="forward"/>',
+            1,
+        )
+
     return text.encode('utf-8')
 
 
@@ -296,7 +304,9 @@ def _check_tablature(stream) -> bool:
     """
     Check if MusicXML contains guitar tablature technical notation.
 
-    Looks for <technical> tags with <string> and <fret> child elements.
+    Looks for:
+    1. TabClef (TAB clef sign)
+    2. <technical> tags with <string> and <fret> child elements
 
     Args:
         stream: music21 stream object
@@ -304,8 +314,20 @@ def _check_tablature(stream) -> bool:
     Returns:
         True if tablature data is present, False otherwise
     """
+    from music21 import clef
+
     # Check for tablature staff in parts
     for part in stream.parts:
+        # Check for TAB clef (most reliable indicator)
+        clefs = part.flatten().getElementsByClass(clef.Clef)
+        for c in clefs:
+            if isinstance(c, clef.TabClef):
+                return True
+            # Also check sign attribute for "TAB"
+            if hasattr(c, 'sign') and c.sign == 'TAB':
+                return True
+
+        # Check for fret/string articulations on notes
         for element in part.flatten().notesAndRests:
             # Check if note has tablature articulations (fret/string info)
             if hasattr(element, "articulations"):
@@ -314,7 +336,75 @@ def _check_tablature(stream) -> bool:
                     if "String" in articulation.__class__.__name__ or "Fret" in articulation.__class__.__name__:
                         return True
 
-            # Alternative: check for tablature clef or staff
-            # Some MusicXML files use <staff-details> with <staff-type>tab</staff-type>
+    return False
+
+
+def _check_staff_notation(stream) -> bool:
+    """
+    Check if MusicXML contains standard staff notation (not tablature).
+
+    Looks for standard clefs (treble, bass, etc.) and measures with pitches.
+
+    Args:
+        stream: music21 stream object
+
+    Returns:
+        True if standard staff notation is present, False otherwise
+    """
+    from music21 import clef, note
+
+    # Check for standard clefs (treble, bass, alto, tenor, etc.)
+    for part in stream.parts:
+        # Check for standard clefs
+        clefs = part.flatten().getElementsByClass(clef.Clef)
+        for c in clefs:
+            # Explicitly exclude TAB clef and NoClef
+            if isinstance(c, (clef.TabClef, clef.NoClef)):
+                continue
+
+            # Standard clefs (treble, bass, alto, tenor, etc.)
+            if isinstance(c, (clef.TrebleClef, clef.BassClef, clef.AltoClef, clef.TenorClef)):
+                return True
+
+            # Check for any clef that's not TAB or none
+            if hasattr(c, 'sign') and c.sign not in ('TAB', 'none'):
+                return True
+
+        # Also check if there are pitched notes (not just TAB fret numbers)
+        notes = part.flatten().getElementsByClass(note.Note)
+        if notes:
+            # If we have notes with pitches, it's likely standard notation
+            for n in notes:
+                if hasattr(n, 'pitch') and n.pitch is not None:
+                    return True
 
     return False
+
+
+def detect_notation_type(stream) -> str:
+    """
+    Detect the type of musical notation present in the MusicXML.
+
+    Analyzes the score to determine if it contains:
+    - Standard staff notation only
+    - Guitar tablature only
+    - Both staff and tablature (linked staves)
+
+    Args:
+        stream: music21 stream object
+
+    Returns:
+        "staff" | "tab" | "both" - notation type detected
+    """
+    has_tab = _check_tablature(stream)
+    has_staff = _check_staff_notation(stream)
+
+    if has_tab and has_staff:
+        return "both"
+    elif has_tab:
+        return "tab"
+    elif has_staff:
+        return "staff"
+    else:
+        # Fallback: if we can't detect either, assume staff notation
+        return "staff"

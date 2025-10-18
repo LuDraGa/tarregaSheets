@@ -54,8 +54,32 @@ TarregaSheets is a multi-phase platform designed to revolutionize guitar practic
 
 ## Getting Started
 
-### Prerequisites
+### Option A: Docker (Recommended)
 
+**Prerequisites:**
+- **Docker** and **Docker Compose**
+- **MongoDB Atlas** account (for database)
+- **OpenRouter API key** (for AI features)
+
+**Setup:**
+```bash
+# 1. Clone and configure environment
+git clone <repo-url>
+cd tarregaSheets
+cp backend/.env.example backend/.env
+# Edit backend/.env with your MongoDB Atlas URL and OpenRouter API key
+
+# 2. Build and start services
+docker compose up --build
+
+# Backend: http://localhost:8000
+# Frontend: http://localhost:5173
+# API Docs: http://localhost:8000/docs
+```
+
+### Option B: Local Development
+
+**Prerequisites:**
 - **Node.js 20** (use nvm: `nvm install 20 && nvm use 20`)
 - **Python 3.12+**
 - **uv** package manager: `curl -LsSf https://astral.sh/uv/install.sh | sh`

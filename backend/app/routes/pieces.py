@@ -179,3 +179,102 @@ async def add_version(piece_id: str, version_data: dict):
     # Return updated piece
     updated_piece = await db.pieces.find_one({"id": piece_id})
     return Piece(**updated_piece)
+
+
+@router.post("/{piece_id}/versions/{version_id}/reprocess", response_model=Piece)
+async def reprocess_version(piece_id: str, version_id: str):
+    """
+    Reprocess a version from its original file.
+
+    This endpoint is useful when:
+    - Sanitization rules are updated and old files need reprocessing
+    - MIDI generation failed and needs retry
+    - Parse errors need fixing with updated logic
+
+    **Flow:**
+    1. Fetch version from database
+    2. Download original_file_id from GridFS
+    3. Re-run _sanitize_musicxml() with updated rules
+    4. Re-parse with music21
+    5. Re-generate MIDI
+    6. Update MusicXML and MIDI assets
+    7. Update parse_status and midi_status
+
+    **Returns:**
+    Updated piece with reprocessed version
+    """
+    db = get_database()
+
+    # Check if piece exists
+    piece = await db.pieces.find_one({"id": piece_id})
+    if not piece:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
+
+    # Find version
+    version = next((v for v in piece.get("versions", []) if v["id"] == version_id), None)
+    if not version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+
+    # Check if version has original_file_id
+    original_file_id = version.get("original_file_id")
+    if not original_file_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Version does not have original_file_id for reprocessing",
+        )
+
+    # TODO: Implement reprocessing logic
+    # 1. Download original file from GridFS
+    # 2. Re-run parse_musicxml() with updated sanitization
+    # 3. Re-run generate_midi()
+    # 4. Upload new files to GridFS
+    # 5. Update version assets
+
+    raise HTTPException(
+        status_code=501,
+        detail="Reprocessing endpoint requires GridFS integration (coming soon)",
+    )
+
+    # Future implementation:
+    # from app.services.storage import get_file, upload_file
+    # from app.services.parser import parse_musicxml, generate_midi
+    #
+    # # Download original file
+    # original_content = get_file(original_file_id)
+    #
+    # # Re-parse
+    # try:
+    #     metadata, cleaned_xml = parse_musicxml(original_content, "reprocessed.musicxml")
+    #     parse_status = "success"
+    # except Exception as e:
+    #     parse_status = "failed"
+    #     # Update version with error
+    #     await db.pieces.update_one(
+    #         {"id": piece_id, "versions.id": version_id},
+    #         {"$set": {"versions.$.parse_status": parse_status}}
+    #     )
+    #     raise HTTPException(status_code=500, detail=f"Parse failed: {e}")
+    #
+    # # Re-generate MIDI
+    # try:
+    #     midi_content = generate_midi(cleaned_xml, "reprocessed.musicxml")
+    #     midi_status = "success"
+    # except Exception as e:
+    #     midi_status = "failed"
+    #
+    # # Upload new files
+    # musicxml_file_id = upload_file(cleaned_xml, "reprocessed.musicxml", "application/vnd.recordare.musicxml+xml")
+    # midi_file_id = upload_file(midi_content, "reprocessed.mid", "audio/midi") if midi_status == "success" else None
+    #
+    # # Update version
+    # await db.pieces.update_one(
+    #     {"id": piece_id, "versions.id": version_id},
+    #     {"$set": {
+    #         "versions.$.parse_status": parse_status,
+    #         "versions.$.midi_status": midi_status,
+    #         "versions.$.assets": [...],  # Update with new file IDs
+    #     }}
+    # )
+    #
+    # updated_piece = await db.pieces.find_one({"id": piece_id})
+    # return Piece(**updated_piece)

@@ -13,6 +13,15 @@ class Asset(BaseModel):
     kind: Literal["pdf", "musicxml", "mxl", "midi"] = Field(..., description="Asset type")
     url: str = Field(..., description="URL to file (GridFS or S3)")
     filename: str = Field(..., description="Original filename")
+    notation_type: Literal["staff", "tab", "both"] | None = Field(
+        None, description="Notation type (for MusicXML files)"
+    )
+    conversion_status: Literal["completed", "failed", "in_progress"] | None = Field(
+        None, description="Conversion status (if this asset was generated via conversion)"
+    )
+    conversion_from: str | None = Field(
+        None, description="Original notation type if converted (e.g., 'staff' → 'tab')"
+    )
 
 
 class Version(BaseModel):
@@ -27,6 +36,24 @@ class Version(BaseModel):
     key: str = Field("C", description="Musical key (e.g., 'C', 'Am')")
     time_signature: str = Field("4/4", description="Time signature (e.g., '4/4', '3/4')")
     assets: list[Asset] = Field(default_factory=list, description="Associated files")
+
+    # Notation type tracking
+    original_notation: Literal["staff", "tab", "both"] | None = Field(
+        None, description="Original notation type from uploaded file"
+    )
+
+    # Reprocessing support
+    original_file_id: str | None = Field(
+        None, description="GridFS file ID of original upload (for reprocessing)"
+    )
+
+    # Parse and MIDI generation status
+    parse_status: Literal["success", "failed", "partial", "pending"] = Field(
+        "success", description="MusicXML parsing status"
+    )
+    midi_status: Literal["success", "failed", "partial", "pending"] = Field(
+        "success", description="MIDI generation status"
+    )
 
 
 class Piece(BaseModel):

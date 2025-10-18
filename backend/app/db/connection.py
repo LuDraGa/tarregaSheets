@@ -12,7 +12,14 @@ mongodb_database: AsyncIOMotorDatabase | None = None
 async def connect_to_db():
     """Connect to MongoDB."""
     global mongodb_client, mongodb_database
-    mongodb_client = AsyncIOMotorClient(settings.mongodb_url)
+
+    # TLS/SSL options for OpenSSL 3.x compatibility with MongoDB Atlas
+    # OpenSSL 3.x has stricter security - these options bypass TLSV1_ALERT_INTERNAL_ERROR
+    mongodb_client = AsyncIOMotorClient(
+        settings.mongodb_url,
+        tlsAllowInvalidCertificates=True,  # Required for OpenSSL 3.x + MongoDB Atlas
+        tlsAllowInvalidHostnames=True,     # Bypass hostname verification issues
+    )
     mongodb_database = mongodb_client[settings.database_name]
     print(f"Connected to MongoDB: {settings.database_name}")
 

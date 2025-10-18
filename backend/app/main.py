@@ -26,13 +26,24 @@ app.add_middleware(
 # Startup and shutdown events
 @app.on_event("startup")
 async def startup_event():
-    """Connect to MongoDB on startup."""
+    """Connect to MongoDB and start conversion queue on startup."""
     await connect_to_db()
+
+    # Start conversion queue
+    from app.services.conversion_queue import get_queue
+    queue = get_queue()
+    print(f"✅ Conversion queue started with {queue.max_workers} worker(s)")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Close MongoDB connection on shutdown."""
+    """Close MongoDB connection and stop conversion queue on shutdown."""
+    # Stop conversion queue
+    from app.services.conversion_queue import get_queue
+    queue = get_queue()
+    queue.stop()
+    print("✅ Conversion queue stopped")
+
     await close_db_connection()
 
 
@@ -44,9 +55,10 @@ async def health_check():
 
 
 # Include routers
-from app.routes import files, health
+from app.routes import conversions, files, health
 
 app.include_router(pieces.router, prefix="/pieces", tags=["pieces"])
 app.include_router(upload.router, prefix="/upload", tags=["upload"])
 app.include_router(files.router, prefix="/files", tags=["files"])
 app.include_router(health.router, prefix="/health", tags=["health"])
+app.include_router(conversions.router, tags=["conversions"])
