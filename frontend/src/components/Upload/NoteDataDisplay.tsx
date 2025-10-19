@@ -52,21 +52,44 @@ export default function NoteDataDisplay({ musicXmlUrl }: NoteDataDisplayProps) {
   const [notes, setNotes] = useState<NoteData[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [mounted, setMounted] = useState(false)
+
+  // Wait for component to mount before accessing refs
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
+    if (!mounted) {
+      console.log('🎵 NoteDataDisplay: Waiting for component to mount...')
+      return
+    }
+
     const containerEl = containerRef.current
-    if (!containerEl) return
+    if (!containerEl) {
+      console.error('❌ NoteDataDisplay: containerRef is null even after mount')
+      setError('Failed to initialize note extraction')
+      setIsLoading(false)
+      return
+    }
+
+    console.log('🎵 NoteDataDisplay: Initializing alphaTab for note extraction')
 
     const settings = new Settings()
     settings.core.enableLazyLoading = false
     settings.core.useWorkers = false // Disable workers for easier debugging
     settings.core.fontDirectory = '/font/'
 
+    // Don't enable player - we only need score parsing
+    settings.player.enablePlayer = false
+
     const api = new AlphaTabApi(containerEl, settings)
     apiRef.current = api
 
+    console.log('🎵 NoteDataDisplay: alphaTab API created, setting up event listeners')
+
     api.scoreLoaded.on((score) => {
-      console.log('📊 Extracting note data from score:', score.title)
+      console.log('📊 NoteDataDisplay: scoreLoaded event fired! Score:', score.title)
 
       const extractedNotes: NoteData[] = []
       let currentTimeMs = 0
@@ -106,29 +129,41 @@ export default function NoteDataDisplay({ musicXmlUrl }: NoteDataDisplayProps) {
       setIsLoading(false)
     })
 
+    api.renderFinished.on(() => {
+      console.log('🎨 NoteDataDisplay: renderFinished event fired')
+    })
+
     api.error.on((err) => {
-      console.error('❌ Error loading score:', err)
+      console.error('❌ NoteDataDisplay: alphaTab error event:', err)
       setError(err.message || 'Failed to load note data')
       setIsLoading(false)
     })
 
     // Load MusicXML
+    console.log('🎵 NoteDataDisplay: Fetching MusicXML from:', musicXmlUrl)
     fetch(musicXmlUrl)
-      .then((res) => res.arrayBuffer())
+      .then((res) => {
+        console.log('🎵 NoteDataDisplay: MusicXML fetch response received, status:', res.status)
+        return res.arrayBuffer()
+      })
       .then((buffer) => {
+        console.log('🎵 NoteDataDisplay: MusicXML buffer loaded, size:', buffer.byteLength, 'bytes')
+        console.log('🎵 NoteDataDisplay: Calling api.load()...')
         api.load(buffer)
+        console.log('🎵 NoteDataDisplay: api.load() called, waiting for scoreLoaded event...')
       })
       .catch((err) => {
-        console.error('❌ Failed to fetch MusicXML:', err)
+        console.error('❌ NoteDataDisplay: Failed to fetch MusicXML:', err)
         setError('Failed to load MusicXML file')
         setIsLoading(false)
       })
 
     return () => {
+      console.log('🧹 NoteDataDisplay: Cleaning up alphaTab')
       api.destroy()
       apiRef.current = null
     }
-  }, [musicXmlUrl])
+  }, [mounted, musicXmlUrl])
 
   if (isLoading) {
     return (
@@ -151,8 +186,8 @@ export default function NoteDataDisplay({ musicXmlUrl }: NoteDataDisplayProps) {
 
   return (
     <div className="space-y-4">
-      {/* Hidden container for alphaTab parsing */}
-      <div ref={containerRef} className="hidden" />
+      {/* Hidden container for alphaTab parsing - alphaTab needs actual rendering space */}
+      <div ref={containerRef} className="absolute -left-[9999px] h-[100px] w-[100px]" />
 
       {/* Note data display */}
       <div className="rounded-lg border border-gray-200 bg-white">
