@@ -8,6 +8,347 @@
 
 ## Progress Log
 
+### 2025-01-19 - Upload Preview: Note Data Extraction & Staff Playback
+
+**Goal:** Separate TAB and Staff notation in upload preview workspace with proper playback controls
+
+#### Tab → Note Data Display
+- ✅ Modified `AlphaTabRenderer` to support display modes: `tab-only`, `staff-only`, `both`
+- ✅ Created `NoteDataDisplay` component to extract and show note information from MusicXML
+  - Shows table with: Time, Note Name, Duration, MIDI Pitch, All Guitar Positions, Instrument
+  - Calculates all possible string/fret positions for each note (standard EADGBE tuning)
+  - Uses alphaTab's score parser to extract beat/note data
+- ⚠️ Fixed containerRef mounting issue - container must exist before alphaTab initialization
+  - Moved container div outside conditional rendering
+  - Added mounted state to ensure ref is attached before initialization
+- ✅ Replaced AlphaTabPreview with NoteDataDisplay in "Tab Playback" section
+
+#### Staff → Full Playback Controls
+- ✅ Created `StaffPreview` component (clone of AlphaTabPreview with `staff-only` mode)
+  - Shows standard 5-line staff notation (not TAB)
+  - Full playback controls: ▶️⏸️⏹️ + time slider + instrument selector
+  - Measure tracking with visual highlight
+  - Collapsed/expanded views
+- ✅ Replaced OsmdPreview with StaffPreview in "Sheet Music" section
+- ✅ Both previews now have independent playback engines
+
+**Code Locations:**
+- `frontend/src/lib/alphatab-renderer.ts:24-29, 54-57, 199-219` - Display mode support
+- `frontend/src/components/Upload/NoteDataDisplay.tsx` - Note extraction table
+- `frontend/src/components/Upload/StaffPreview.tsx` - Staff notation with playback
+- `frontend/src/components/Upload/PlaybackPreviewPanel.tsx` - Updated to use new components
+
+**Current Status:**
+- ✅ Staff playback fully working
+- ✅ Note data display working - containerRef fix applied
+- ⏳ Next: Add edit capabilities to preview workspace
+
+---
+
+## Planning: Editable Upload Preview Workspace
+
+**Date:** 2025-01-19
+**Status:** Planning → Ready to Execute
+**Goal:** Allow editing MusicXML source and metadata when issues are found during upload preview
+
+### Background & Motivation
+
+**Problem:** Users upload MusicXML files that have issues:
+- Wrong tempo values (e.g., two different tempos written in the file)
+- Incorrect metadata (title, composer)
+- Malformed notation that needs manual correction
+- Blemishes or inconsistencies in the source file
+
+**Current workaround:** User must download → edit externally → re-upload (tedious)
+
+**Desired flow:** Edit directly in upload preview workspace → Re-parse → Updated previews
+
+### Existing Edit UI Pattern (Reference)
+
+**Location:** `frontend/src/components/Upload/ConversionPreviewModal.tsx`
+
+**Current pattern:**
+1. Modal with tabs: "Statuses" | "Editor"
+2. "Editor" tab loads MusicXML content from GridFS
+3. MusicXMLEditor component (CodeMirror) for editing
+4. Error lines highlighted in red
+5. Validate button to check edits
+6. Save functionality (currently placeholder)
+
+**Components used:**
+- `MusicXMLEditor.tsx` - CodeMirror 6 editor with XML syntax, error highlighting
+- `ParseErrorDisplay.tsx` - Shows detailed error info
+- `uploadApi.validateMusicXML()` - Backend validation endpoint
+
+### Architecture Decisions
+
+#### Decision 1: Reuse Existing Editor Pattern ✅
+
+**What:** Adopt same tab-based editor UI from ConversionPreviewModal
+
+**Reasoning:**
+- Consistency: Users already familiar with this pattern
+- Code reuse: MusicXMLEditor component is battle-tested
+- Feature complete: Validation, error highlighting, download already working
+
+**Implementation:**
+- Add "Editor" tab to PlaybackPreviewPanel or separate modal
+- Fetch baseMusicXmlUrl content (same as ConversionPreviewModal)
+- Show MusicXMLEditor with validation integration
+
+#### Decision 2: Quick Metadata Edit Fields ✅
+
+**What:** Inline editable fields for common fixes (tempo, title, composer)
+
+**Reasoning:**
+- 80/20 rule: Most fixes are simple metadata changes
+- UX: Editing tempo shouldn't require XML knowledge
+- Speed: Faster than finding `<sound tempo="120"/>` in XML
+
+**Implementation:**
+- Editable input fields in Note Data section header
+- Auto-update MusicXML when metadata changed (find/replace in XML)
+- Trigger re-parse after save
+
+**Format:**
+```tsx
+<div className="flex gap-4">
+  <input label="Tempo" value={tempo} onChange={handleTempoChange} />
+  <input label="Title" value={title} onChange={handleTitleChange} />
+  <input label="Composer" value={composer} onChange={handleComposerChange} />
+  <button onClick={handleSaveMetadata}>Save & Re-parse</button>
+</div>
+```
+
+#### Decision 3: Re-parse Workflow After Edits ✅
+
+**What:** Edit → Validate → Re-parse → Update all previews
+
+**Reasoning:**
+- Single source of truth: MusicXML is the source, all previews derived
+- Validation first: Prevent saving invalid XML
+- Live updates: Note data table + staff preview refresh immediately
+
+**Workflow:**
+```
+User edits MusicXML or metadata
+  ↓
+Click "Save & Re-parse"
+  ↓
+Frontend: POST /upload/validate-musicxml
+  ↓
+If valid:
+  - Re-parse metadata
+  - Re-extract notes
+  - Update note data table
+  - Update staff preview
+  - Show success message
+  ↓
+If invalid:
+  - Show error details
+  - Highlight error lines in editor
+  - User fixes and retries
+```
+
+#### Decision 4: Version System Integration ⚠️ DEFERRED
+
+**What:** Save edited MusicXML as new version (v1, v2, v3...)
+
+**Reasoning:**
+- History tracking: Keep original + all edits
+- Rollback capability: Revert to previous version if edit breaks something
+- Audit trail: See what changed over time
+
+**Deferred because:**
+- Version system models already exist (MusicXMLVersion in piece.py)
+- Backend endpoints not yet implemented (POST /pieces/{id}/versions/{version_id}/save-edit)
+- Focus on edit UX first, versioning in Phase 2
+
+**Future implementation:**
+- Create new MusicXMLVersion with status="draft"
+- Link to parent version
+- Track changes (diff from previous)
+- Approval workflow (draft → approved → published)
+
+#### Decision 5: Where to Show Editor ✅
+
+**Option A:** Separate modal (like ConversionPreviewModal)
+**Option B:** Tab in PlaybackPreviewPanel
+**Option C:** Inline collapsible section
+
+**CHOSEN: Option A - Separate Modal**
+
+**Reasoning:**
+- Screen real estate: Editor needs full width for XML editing
+- Focus: Editing is a distinct workflow, deserves dedicated UI
+- Reuse: Can reuse same modal for both upload errors AND preview edits
+- Consistent: Matches existing ConversionPreviewModal pattern
+
+**Implementation:**
+- "Edit MusicXML" button in Note Data section header
+- Opens ConversionPreviewModal with `initialTab="editor"`
+- OR create new EditMusicXMLModal (if we want different features)
+
+### Technical Specifications
+
+#### Component Changes
+
+**1. PlaybackPreviewPanel.tsx** (add edit button)
+```tsx
+<div className="flex items-center justify-between">
+  <h4>Note Data (Tab Analysis)</h4>
+  <button onClick={() => setShowEditModal(true)}>
+    Edit MusicXML
+  </button>
+</div>
+```
+
+**2. NoteDataDisplay.tsx** (add metadata edit fields)
+```tsx
+<div className="metadata-editor">
+  <input value={tempo} onChange={(e) => setTempo(e.target.value)} />
+  <input value={title} onChange={(e) => setTitle(e.target.value)} />
+  <button onClick={handleSaveAndReparse}>Save & Re-parse</button>
+</div>
+```
+
+**3. New: EditMusicXMLModal.tsx** (or reuse ConversionPreviewModal)
+- Props: `uploadedFile`, `isOpen`, `onClose`, `onSave`
+- Contains: MusicXMLEditor, validation integration
+- On save: Callback to parent → trigger re-parse
+
+**4. Backend: Re-parse endpoint** (optional for v1)
+```python
+POST /upload/reparse
+Body: { xml_content: str, file_id: str }
+Response: { metadata, notes_extracted, parse_status, errors }
+```
+
+OR reuse existing validation endpoint and handle re-parsing client-side.
+
+#### Data Flow
+
+**Edit Metadata (Quick Edit):**
+```
+1. User changes tempo input: 120 → 100
+2. Frontend: Find <sound tempo="120"/> in xmlContent
+3. Replace with <sound tempo="100"/>
+4. Call validateMusicXML(xmlContent)
+5. If valid: Re-extract notes with alphaTab
+6. Update NoteDataDisplay table
+7. Update StaffPreview (reload with new XML)
+```
+
+**Edit Full MusicXML (Advanced):**
+```
+1. User clicks "Edit MusicXML"
+2. Modal opens with CodeMirror editor
+3. User edits XML (e.g., fix wrong note pitch)
+4. Click "Validate" → backend checks syntax
+5. Click "Save" → close modal, trigger re-parse
+6. Parent component:
+   - Calls validateMusicXML
+   - Re-initializes NoteDataDisplay with new XML
+   - Re-initializes StaffPreview with new XML
+```
+
+### Implementation Phases
+
+#### Phase 1: Editor Button + Modal (0.5d) ⏳ NEXT
+- [ ] Add "Edit MusicXML" button to PlaybackPreviewPanel
+- [ ] Create EditMusicXMLModal (or extend ConversionPreviewModal)
+- [ ] Wire up open/close logic
+- [ ] Load MusicXML content from baseMusicXmlUrl
+- [ ] Show MusicXMLEditor in modal
+- [ ] Test: Click button → modal opens → editor loads
+
+#### Phase 2: Save & Re-parse (1d)
+- [ ] Add save handler in modal
+- [ ] On save: Update parent state with new XML content
+- [ ] Trigger re-parse:
+  - NoteDataDisplay: Reload with new XML URL or content
+  - StaffPreview: Reload with new XML URL or content
+- [ ] Handle errors: Show validation errors, keep modal open
+- [ ] Test: Edit XML → Save → Previews update
+
+#### Phase 3: Quick Metadata Edits (0.5d)
+- [ ] Add inline editable fields (tempo, title, composer)
+- [ ] Extract current values from uploadedFile.metadata
+- [ ] On change: Update XML content (find/replace)
+- [ ] "Save & Re-parse" button triggers same workflow as Phase 2
+- [ ] Test: Change tempo → Save → Note times recalculated
+
+#### Phase 4: Version System Integration (1.5d) - FUTURE
+- [ ] Create backend endpoint: POST /pieces/{id}/versions/{version_id}/save-edit
+- [ ] Store new MusicXMLVersion with status="draft"
+- [ ] Show version history in modal
+- [ ] Diff viewer (before/after comparison)
+- [ ] Approval workflow UI
+
+### Open Questions
+
+**Q1:** Should we auto-save edits, or require explicit "Save" button?
+**Answer:** Explicit save for v1 (safer, clearer intent)
+
+**Q2:** Should we allow editing MIDI directly, or only MusicXML?
+**Answer:** Only MusicXML (MIDI is derived, re-generated from XML)
+
+**Q3:** Should quick metadata edits update the XML, or separate metadata object?
+**Answer:** Update XML (single source of truth, no sync issues)
+
+**Q4:** How to handle re-parsing? New file ID or in-memory?
+**Answer:** In-memory for v1 (no GridFS save), save as version in Phase 4
+
+### Success Criteria
+
+**Phase 1-3 Complete When:**
+- ✅ User can click "Edit MusicXML" button
+- ✅ Modal opens with CodeMirror editor showing current XML
+- ✅ User can edit XML and see syntax highlighting
+- ✅ Validation works and shows errors
+- ✅ Save button triggers re-parse
+- ✅ Note data table updates with new note info
+- ✅ Staff preview updates with new notation
+- ✅ Quick metadata fields (tempo/title/composer) work
+- ✅ Error states handled gracefully
+
+**Future Phase 4 Complete When:**
+- ✅ Edits saved as new MusicXMLVersion
+- ✅ Version history viewer shows all edits
+- ✅ Diff viewer compares versions
+- ✅ Approval workflow (draft → approved → published)
+
+### Code Locations
+
+**Files to Modify:**
+- `frontend/src/components/Upload/PlaybackPreviewPanel.tsx` - Add edit button
+- `frontend/src/components/Upload/NoteDataDisplay.tsx` - Add metadata fields
+- `frontend/src/components/Upload/StaffPreview.tsx` - Add reload method
+
+**Files to Create:**
+- `frontend/src/components/Upload/EditMusicXMLModal.tsx` (or reuse existing)
+
+**Files to Reference:**
+- `frontend/src/components/Upload/ConversionPreviewModal.tsx` - Pattern to follow
+- `frontend/src/components/Upload/MusicXMLEditor.tsx` - Editor component
+- `frontend/src/services/api.ts` - Validation endpoint
+
+### Notes for Future Developer
+
+**Context for someone picking this up:**
+
+1. **Why this feature?** Users upload files with errors/blemishes, need quick fixes
+2. **What exists?** Error editing UI in ConversionPreviewModal - reuse that pattern
+3. **What's new?** Applying same edit workflow to upload preview workspace
+4. **Key insight:** MusicXML is source of truth - edit it, everything else updates
+5. **Deferred:** Version system integration (models exist, endpoints pending)
+
+**How to continue:**
+- Start with Phase 1 (edit button + modal)
+- Test each phase independently
+- Phases 1-3 can ship without Phase 4
+- Phase 4 requires backend version endpoints (see piece.py models)
+
 ### 2025-01-19 - Piece Archival & Bulk Actions
 
 - ✅ Added `is_archived`/`archived_at` to backend `Piece` model with filtered listing support (`archived=true|false|all`)
