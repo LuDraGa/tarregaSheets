@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import NoteDataDisplay from './NoteDataDisplay'
+import PracticeAnalysisDisplay from './PracticeAnalysisDisplay'
 import StaffPreview from './StaffPreview'
 
 interface PlaybackPreviewPanelProps {
@@ -28,14 +28,14 @@ export default function PlaybackPreviewPanel({
       {tabSource ? (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h4 className="text-sm font-semibold text-gray-700">Note Data (Tab Analysis)</h4>
-            <p className="text-xs text-gray-600">All notes with playback times and guitar positions</p>
+            <h4 className="text-sm font-semibold text-gray-700">Guitar Practice Insights</h4>
+            <p className="text-xs text-gray-600">Note frequency, chord shapes, scale patterns, progressions</p>
           </div>
-          <NoteDataDisplay musicXmlUrl={tabSource} />
+          <PracticeAnalysisDisplay musicXmlUrl={tabSource} />
         </div>
       ) : (
         <div className="rounded-lg border border-dashed border-gray-300 bg-white p-4 text-sm text-gray-600">
-          Note data unavailable — upload a MusicXML file to extract note information.
+          Practice analysis unavailable — upload a MusicXML file to analyze patterns.
         </div>
       )}
 
