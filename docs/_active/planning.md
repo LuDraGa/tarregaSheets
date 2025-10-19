@@ -741,3 +741,450 @@ interface PracticeAnalysis {
 - Fretboard diagram library (react-fretboard vs custom SVG?)
 - Scale matching algorithm (pattern-based or ML?)
 - Progression template library (comprehensive vs common only?)
+
+---
+
+# Planning: Interactive Fretboard TAB Builder (Practice Analysis Tab 2)
+
+**Date**: 2025-01-19 · **Owner**: Team · **Status**: Planning
+
+## 1) TL;DR (≤3 bullets)
+
+- Add second tab to Practice Analysis: Interactive fretboard visualization where users select note positions
+- Transform passive analysis into active TAB creation: toggle notes on/off, choose from alternate positions, build custom tablature
+- Success: Users can visualize all notes on fretboard, select optimal positions, generate playable TAB, edit and refine
+
+## 2) Goals / Non-Goals
+
+**Goals:**
+- Interactive fretboard visualization (6 strings × 24 frets)
+- Show all notes from piece on fretboard at their possible positions
+- Toggle individual notes on/off
+- Select from alternate positions for each note (checkboxes)
+- Build custom TAB notation based on user selections
+- Playback with user-selected positions (alphaTab integration)
+- Edit mode: modify positions for any note
+- Export custom TAB as MusicXML
+
+**Non-Goals:**
+- Automatic optimal fingering algorithm (future AI feature)
+- Multi-track TAB editing (single guitar only)
+- Real-time collaborative editing (future)
+- Guitar tuning editor (stick to standard EADGBE for v1)
+
+## 3) Scope (In / Out)
+
+**In:**
+- Visual fretboard component (6 strings, 24 frets, standard tuning)
+- All extracted notes displayed at all possible positions
+- Checkbox UI to select which position to use
+- Toggle notes visibility (on/off)
+- Generate TAB notation from selections
+- Live preview with alphaTab
+- Edit mode for position adjustments
+- Save custom TAB as new version
+
+**Out (Future):**
+- Fingering optimization AI
+- Custom tunings (drop D, DADGAD, etc.)
+- Multi-guitar arrangements
+- Chord shape suggestions on fretboard
+- Slide/bend/hammer-on notation (use existing from source)
+
+## 4) Architecture (One paragraph + ASCII)
+
+User opens Practice Analysis → Tab 2 "Fretboard Builder" → Load notes from alphaTab extraction → Calculate all positions for each note (already have this) → Render interactive fretboard SVG → User toggles notes, selects positions via checkboxes → Generate TAB notation (MusicXML with `<technical><string><fret>`) → Preview with alphaTab in tab-only mode → User edits positions → Re-generate TAB → Save as new MusicXML version. All client-side except final save.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Practice Analysis                                           │
+├─────────────────────────────────────────────────────────────┤
+│ [Tab 1: Insights] [Tab 2: Fretboard Builder] ◄── NEW       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Fretboard (6 strings × 24 frets)                          │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ E ─●─────●─────────────────────────────────────     │   │
+│  │ B ───────────●─────●───────────────────────────     │   │
+│  │ G ─────●───────────────●───────────────────────     │   │
+│  │ D ───●─────────●─────────────────────────────      │   │
+│  │ A ─────────────────●─────●─────────────────────     │   │
+│  │ E ─●─────────────────────────────────────────       │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  Note: C4 (Time: 1.250s)                                   │
+│  Positions: ☑ String 2, Fret 1  ☐ String 3, Fret 5  ...   │
+│  [◀ Prev Note] [Next Note ▶]                               │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Generated TAB Preview (alphaTab)                      │   │
+│  │ [Plays with selected positions]                       │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  [Save TAB]  [Export MusicXML]  [Reset to Original]        │
+└─────────────────────────────────────────────────────────────┘
+
+Data Flow:
+MusicXML → alphaTab → Extract Notes → Calculate Positions
+                                              ↓
+                                    User Selects Positions
+                                              ↓
+                      Generate MusicXML with <technical> tags
+                                              ↓
+                         Preview with alphaTab (tab-only mode)
+                                              ↓
+                              User Edits → Re-generate
+                                              ↓
+                                 Save as New Version
+```
+
+## 5) Contract Snapshot (stable bits only)
+
+**Internal Data Structure:**
+```typescript
+interface FretboardNote {
+  time: number
+  noteName: string
+  midiPitch: number
+  duration: number
+  positions: NotePosition[]  // All possible positions
+  selectedPosition: NotePosition | null  // User's choice
+  isVisible: boolean  // Toggle on/off
+}
+
+interface NotePosition {
+  string: number  // 1-6
+  fret: number    // 0-24
+  selected: boolean  // UI state
+}
+
+interface TabBuilder {
+  notes: FretboardNote[]
+  generateMusicXML(): string  // Convert selections to MusicXML
+  resetToOriginal(): void
+  saveAsVersion(): Promise<void>
+}
+```
+
+**MusicXML Technical Tags (for TAB):**
+```xml
+<note>
+  <pitch><step>C</step><octave>4</octave></pitch>
+  <duration>4</duration>
+  <technical>
+    <string>2</string>  <!-- User selected -->
+    <fret>1</fret>      <!-- User selected -->
+  </technical>
+</note>
+```
+
+## 6) Risks & Mitigations (Top 3)
+
+| Risk                                    | Mitigation                                                    |
+| --------------------------------------- | ------------------------------------------------------------- |
+| Fretboard SVG performance (many notes)  | Virtual scrolling, only render visible frets, lazy load      |
+| Position conflicts (same time, string)  | Validation: warn user, suggest alternate positions            |
+| MusicXML generation complexity          | Use music21 on backend, or Tonal.js + template client-side    |
+
+## 7) Decisions Log
+
+| Date       | Decision                                          | Type (1-way/2-way) | Why/Link                                         |
+| ---------- | ------------------------------------------------- | ------------------ | ------------------------------------------------ |
+| 2025-01-19 | Two-tab UI: Insights + Fretboard Builder         | 2-way              | Separate concerns, clearer UX                    |
+| 2025-01-19 | Standard tuning only for v1 (EADGBE)             | 2-way              | Simplify, can add tuning selector later          |
+| 2025-01-19 | Client-side TAB generation                        | 2-way              | Faster UX, can offload to backend if needed      |
+| 2025-01-19 | Checkboxes for position selection                 | 2-way              | Clear UI, supports multi-select (future)         |
+| 2025-01-19 | Save as new MusicXML version                      | 1-way              | Preserves original, audit trail                  |
+
+## 8) Open Questions (with owners)
+
+* [ ] **Fretboard library:** Use existing (react-fretboard) or build custom SVG? — **Owner:** Developer — **Due:** Phase 1 start
+* [ ] **MusicXML generation:** Client-side (Tonal.js) or backend (music21)? — **Owner:** Developer — **Due:** Phase 2 start
+* [ ] **Conflict resolution:** Auto-suggest when positions overlap? — **Owner:** UX/Developer — **Due:** Phase 3
+* [ ] **Playback sync:** Highlight current note on fretboard during playback? — **Owner:** Developer — **Due:** Phase 4
+* [ ] **Export format:** MusicXML only or also Guitar Pro (.gp5)? — **Owner:** Product — **Due:** TBD
+
+## 9) Success Metrics
+
+**Phase 1 (Fretboard Visualization):**
+- Display all notes on fretboard at all positions
+- Toggle notes on/off works
+- Visual clarity: easy to see which fret/string for each note
+- Performance: <100ms to render fretboard with 100+ notes
+
+**Phase 2 (Position Selection):**
+- Checkbox UI for selecting positions
+- Selected positions highlighted on fretboard
+- Validation prevents conflicts (same time, same string)
+- User can navigate through notes sequentially
+
+**Phase 3 (TAB Generation & Preview):**
+- Generate valid MusicXML with `<technical>` tags
+- alphaTab renders generated TAB correctly
+- Playback works with user-selected positions
+- TAB matches user's visual expectations
+
+**Phase 4 (Edit & Save):**
+- User can modify positions after initial selection
+- Changes reflected in TAB preview immediately
+- Save as new MusicXML version works
+- Export MusicXML downloads correct file
+
+## 10) Timeline (plan, not commitment)
+
+- 🔲 **Phase 1: Fretboard Visualization** (2d)
+  - Build interactive fretboard component (SVG)
+  - Display all notes at all positions
+  - Toggle notes on/off
+  - Navigation between notes
+- 🔲 **Phase 2: Position Selection UI** (1.5d)
+  - Checkbox UI for alternate positions
+  - Visual feedback (highlight selected)
+  - Validation logic (conflict detection)
+  - State management (selected positions)
+- 🔲 **Phase 3: TAB Generation & Preview** (2d)
+  - Convert selections to MusicXML with `<technical>` tags
+  - Integrate with alphaTab for preview
+  - Playback with selected positions
+  - Error handling for invalid selections
+- 🔲 **Phase 4: Edit Mode & Save** (1d)
+  - Edit mode UI (modify positions)
+  - Re-generate TAB on changes
+  - Save as new MusicXML version
+  - Export functionality
+
+**Total: ~6.5 days** for full feature
+
+---
+
+### Phase Implementation Details
+
+**Phase 1: Fretboard Visualization** 🔲 PLANNED
+
+**Components:**
+- `FretboardVisualizer.tsx` - Main fretboard SVG component
+  - 6 horizontal lines (strings)
+  - 24 vertical lines (frets)
+  - Fret markers (3, 5, 7, 9, 12, 15, 17, 19, 21, 24)
+  - Note circles at positions
+  - Hover tooltips (note name, time)
+- `FretboardControls.tsx` - Toggle controls
+  - "Show All Notes" / "Hide All Notes"
+  - Individual note toggle buttons
+  - "Reset to Original Positions"
+
+**Data Flow:**
+```typescript
+// Input: notes from PracticeAnalysisDisplay
+const notes: NoteData[] = extractedNotes
+
+// Calculate positions (already have this)
+const fretboardNotes: FretboardNote[] = notes.map(note => ({
+  ...note,
+  positions: calculateGuitarPositions(note.midiPitch),
+  selectedPosition: null, // User hasn't chosen yet
+  isVisible: true
+}))
+
+// Render on fretboard
+<FretboardVisualizer notes={fretboardNotes} />
+```
+
+**UI Mockup:**
+```
+Fretboard (String 1 = top, String 6 = bottom)
+┌────────────────────────────────────────────────────────┐
+│ E (1) ●──────●────────────────────────────────────    │ ← High E
+│ B (2) ─────●────●─────────────────────────────────    │
+│ G (3) ──●──────────●──────────────────────────────    │
+│ D (4) ●──────●────────────────────────────────────    │
+│ A (5) ───────────●────●───────────────────────────    │
+│ E (6) ●──────────────────────────────────────────     │ ← Low E
+│       0   3   5   7   9   12  15  17  19  21  24      │
+└────────────────────────────────────────────────────────┘
+       Fret markers: ●   (inlays at 3, 5, 7, 9, 12...)
+       Notes: Colored dots (C=red, D=orange, E=yellow, etc.)
+```
+
+**Phase 2: Position Selection UI** 🔲 PLANNED
+
+**Components:**
+- `PositionSelector.tsx` - Checkbox UI for each note
+  - Lists all possible positions
+  - Radio buttons or checkboxes (only one position active at a time)
+  - Visual preview on fretboard (highlight selected)
+- `NoteNavigator.tsx` - Navigate through notes
+  - "Previous Note" / "Next Note" buttons
+  - Jump to specific time
+  - Show current note info (name, time, duration)
+
+**Interaction Flow:**
+```
+1. User clicks note on fretboard
+   ↓
+2. PositionSelector shows all positions for that note
+   Example: C4 at time 1.250s
+     ○ String 2, Fret 1
+     ○ String 3, Fret 5
+     ○ String 4, Fret 10
+     ○ String 5, Fret 15
+   ↓
+3. User selects "String 3, Fret 5"
+   ↓
+4. Fretboard highlights selected position (green)
+   Other positions dim (gray)
+   ↓
+5. Move to next note (auto-advance or manual)
+```
+
+**Validation:**
+- **Conflict detection:** If two notes at same time both select same string → warn user
+- **Example:**
+  ```
+  Time 1.250s: C4 selected String 3, Fret 5
+  Time 1.250s: E4 selected String 3, Fret 9  ← CONFLICT!
+  → Show warning: "Strings overlap at this time"
+  → Suggest: "Try String 2, Fret 5 for E4"
+  ```
+
+**Phase 3: TAB Generation & Preview** 🔲 PLANNED
+
+**TAB Generation Algorithm:**
+```typescript
+function generateTabMusicXML(fretboardNotes: FretboardNote[]): string {
+  // 1. Sort notes by time
+  const sorted = fretboardNotes.sort((a, b) => a.time - b.time)
+
+  // 2. Build MusicXML structure
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Guitar TAB</part-name>
+    </score-part>
+  </part-list>
+  <part id="P1">`
+
+  // 3. Add measures and notes
+  sorted.forEach(note => {
+    if (!note.selectedPosition) return // Skip unselected notes
+
+    xml += `
+    <note>
+      <pitch>
+        <step>${note.noteName[0]}</step>
+        <octave>${note.noteName[1]}</octave>
+      </pitch>
+      <duration>${note.duration * 4}</duration>
+      <technical>
+        <string>${note.selectedPosition.string}</string>
+        <fret>${note.selectedPosition.fret}</fret>
+      </technical>
+    </note>`
+  })
+
+  xml += `
+  </part>
+</score-partwise>`
+
+  return xml
+}
+```
+
+**Preview Integration:**
+```typescript
+// After user selects all positions
+const tabXML = generateTabMusicXML(fretboardNotes)
+
+// Create blob URL
+const blob = new Blob([tabXML], { type: 'application/xml' })
+const url = URL.createObjectURL(blob)
+
+// Load in alphaTab (tab-only mode)
+<AlphaTabPreview
+  musicXmlUrl={url}
+  displayMode="tab-only"
+  onPlaybackState={handlePlayback}
+/>
+```
+
+**Phase 4: Edit Mode & Save** 🔲 PLANNED
+
+**Edit Mode Features:**
+- Click any note on TAB preview → edit its position
+- Drag notes to different string/fret
+- Undo/Redo stack
+- "Reset to Original" button
+
+**Save Flow:**
+```typescript
+async function saveCustomTab() {
+  const tabXML = generateTabMusicXML(fretboardNotes)
+
+  // Option A: Save locally (download)
+  downloadFile(tabXML, 'custom-tab.musicxml')
+
+  // Option B: Save as new version (future - requires backend)
+  await api.saveTabVersion({
+    pieceId: piece.id,
+    xmlContent: tabXML,
+    notes: 'Custom TAB built with Fretboard Builder'
+  })
+}
+```
+
+---
+
+### Code Locations
+
+**New Files (Phase 1):**
+- `frontend/src/components/Upload/FretboardVisualizer.tsx` - Interactive fretboard SVG
+- `frontend/src/components/Upload/FretboardControls.tsx` - Toggle/visibility controls
+- `frontend/src/components/Upload/FretboardTab.tsx` - Tab 2 container
+
+**New Files (Phase 2):**
+- `frontend/src/components/Upload/PositionSelector.tsx` - Checkbox UI for positions
+- `frontend/src/components/Upload/NoteNavigator.tsx` - Navigate between notes
+- `frontend/src/hooks/useFretboardState.ts` - State management for selections
+
+**New Files (Phase 3):**
+- `frontend/src/lib/tab-generator.ts` - Generate MusicXML from selections
+- `frontend/src/lib/tab-validator.ts` - Validate positions (conflict detection)
+
+**Modified Files:**
+- `frontend/src/components/Upload/PracticeAnalysisDisplay.tsx` - Add tab navigation
+- `frontend/src/components/Upload/PlaybackPreviewPanel.tsx` - Include FretboardTab
+
+**Libraries to Consider:**
+- `react-fretboard` - Existing fretboard component (evaluate)
+- `vexflow` - Music notation rendering (alternative to custom SVG)
+- `tonal` - Music theory utilities (chord/scale helpers)
+
+---
+
+### Notes for Future Developer
+
+**Why This Feature:**
+- Guitarists need to choose optimal fingering positions for playability
+- Automated TAB generation often picks unplayable positions
+- Visual fretboard makes position selection intuitive
+- Custom TAB becomes practice tool (slow down, loop difficult sections)
+
+**Key Insights:**
+- Position calculation already exists (Phase 1 of Practice Analysis)
+- alphaTab can render TAB notation (tab-only mode)
+- MusicXML `<technical>` tags are the key to TAB notation
+- Client-side generation is fast enough for typical pieces
+
+**Integration Points:**
+- Reuses note extraction from PracticeAnalysisDisplay
+- Reuses alphaTab renderer with tab-only mode
+- Can export to ConversionPreviewModal for editing
+- Saves as MusicXMLVersion (when backend endpoints ready)
+
+**Future Enhancements:**
+- AI-suggested optimal fingerings (ML model)
+- Multi-track TAB (bass + rhythm + lead)
+- Real-time playback highlighting on fretboard
+- Guitar tuning selector (drop D, open tunings)
+- Share custom TABs with other users

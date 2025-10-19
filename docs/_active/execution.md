@@ -26,9 +26,19 @@
 - Visual bar charts > raw data tables (more intuitive for guitarists)
 
 **What's Next:**
-- Phase 2: Chord detection (Tonal.js integration)
-- Phase 3: Scale pattern matching
-- Phase 4: Progression analysis
+- **🎸 Interactive Fretboard TAB Builder** (NEW MAJOR GOAL - ~6.5 days)
+  - Two-tab Practice Analysis: Tab 1 (Insights) + Tab 2 (Fretboard Builder)
+  - Visual fretboard showing all notes at all positions
+  - Select optimal positions via checkboxes (conflict detection)
+  - Generate custom TAB notation (MusicXML with `<technical>` tags)
+  - Live preview with alphaTab (tab-only mode)
+  - Playback with user-selected positions
+  - Edit mode: modify positions, re-generate TAB
+  - Save/export custom TAB
+- Practice Insights (Tab 1) - Future Phases:
+  - Phase 2: Chord detection (Tonal.js integration)
+  - Phase 3: Scale pattern matching
+  - Phase 4: Progression analysis
 - Editable preview workspace (MusicXML editor + re-parse flow)
 
 **Code Locations (New/Modified):**
