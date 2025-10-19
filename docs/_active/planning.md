@@ -465,3 +465,279 @@ Req: { "xml_content": "...", "original_version_id": "v1" }
 - **Annex A: music21 Exception Catalog** → [music21-exceptions.md](/docs/features/parse-errors/music21-exceptions.md)
 - **Annex B: Common MusicXML Errors** → [common-errors.md](/docs/features/parse-errors/common-errors.md)
 - **Annex C: XML Editor Integration Guide** → [editor-integration.md](/docs/features/parse-errors/editor-integration.md)
+
+---
+
+# Planning: Guitar Practice Analysis (Upload Preview Workspace)
+
+**Date**: 2025-01-19 · **Owner**: Team · **Status**: Phase 1 Complete, Phases 2-4 Planned
+
+## 1) TL;DR (≤3 bullets)
+
+- Transform raw note data into guitar-focused practice insights: note frequency, chord shapes, scale patterns, progressions
+- Help guitarists identify what to practice (common notes, chord transitions, scale positions)
+- Success: Phase 1 (note frequency) complete with visual bar charts, Phases 2-4 planned with placeholders
+
+## 2) Goals / Non-Goals
+
+**Goals:**
+- Note frequency analysis (which notes appear most often)
+- Chord shape detection (identify chord shapes used in the piece)
+- Scale pattern recognition (identify scales and positions)
+- Progression analysis (track chord/scale transitions)
+
+**Non-Goals:**
+- Automatic fingering generation (future)
+- Difficulty rating algorithm (future)
+- Practice session tracking (separate feature)
+- Real-time analysis during playback (future)
+
+## 3) Scope (In / Out)
+
+**In (Phase 1 - Complete):**
+- Note frequency counting with percentages
+- Visual bar charts showing relative frequency
+- Collapsible UI sections
+- Extract note data from alphaTab score parser
+
+**Out (Deferred to Phases 2-4):**
+- Chord detection algorithm (placeholder ready)
+- Scale pattern matching (placeholder ready)
+- Progression tracking (placeholder ready)
+- Fretboard diagrams (future)
+- Music theory analysis (future)
+
+## 4) Architecture (One paragraph + ASCII)
+
+User uploads MusicXML → alphaTab parses score → extract all notes with timestamps → analyze note frequency → display bar charts. Future phases: identify simultaneous notes (chords), detect melodic sequences (scales), track transitions (progressions). All analysis happens client-side using extracted note data.
+
+```
+MusicXML → alphaTab Parser → Note Extraction → Analysis Engine → UI Display
+                                    ↓
+                        [time, pitch, duration, positions]
+                                    ↓
+              ┌──────────────────────┴──────────────────────┐
+              ↓                      ↓                       ↓
+    Note Frequency          Chord Detection        Scale Matching
+    (Phase 1 ✅)           (Phase 2 🔲)           (Phase 3 🔲)
+                                    ↓
+                           Progression Analysis
+                              (Phase 4 🔲)
+```
+
+## 5) Contract Snapshot (stable bits only)
+
+No new API contracts - all client-side analysis using existing MusicXML URLs.
+
+**Data Structure (stable for future phases):**
+```typescript
+interface PracticeAnalysis {
+  noteFrequency: { note: string; count: number; percentage: number }[] // ✅ Implemented
+  chords: {                                                              // 🔲 Placeholder
+    measure: number
+    time: number
+    notes: string[]
+    chordName?: string
+    shape?: string
+    confidence: number
+  }[]
+  scales: {                                                              // 🔲 Placeholder
+    startMeasure: number
+    endMeasure: number
+    notes: string[]
+    scaleName?: string
+    position?: string
+    confidence: number
+  }[]
+  progressions: {                                                        // 🔲 Placeholder
+    chords: string[]
+    pattern?: string
+    key?: string
+  }[]
+}
+```
+
+## 6) Risks & Mitigations (Top 3)
+
+| Risk                           | Mitigation                                                    |
+| ------------------------------ | ------------------------------------------------------------- |
+| Chord detection accuracy low   | Use Tonal.js library for music theory, show confidence score  |
+| Scale matching false positives | Require minimum sequence length (4+ notes), show confidence   |
+| Performance on long pieces     | Lazy evaluation, only analyze when section expanded          |
+
+## 7) Decisions Log
+
+| Date       | Decision                                          | Type (1-way/2-way) | Why/Link                                         |
+| ---------- | ------------------------------------------------- | ------------------ | ------------------------------------------------ |
+| 2025-01-19 | Client-side analysis (no backend)                 | 2-way              | Faster, no server load, can switch to backend    |
+| 2025-01-19 | Use alphaTab for note extraction (not music21)    | 2-way              | Already loaded for playback, consistent with UI  |
+| 2025-01-19 | Collapsible placeholder sections for future work  | 1-way              | Sets user expectations, easy to build on         |
+| 2025-01-19 | No raw note table for users                       | 2-way              | Focus on insights not data, can add detail view  |
+| 2025-01-19 | Visual bar charts for note frequency              | 2-way              | More intuitive than numbers, easier to scan      |
+
+## 8) Open Questions (with owners)
+
+* [ ] **Chord detection algorithm:** Use Tonal.js or custom logic? — **Owner:** Developer — **Due:** Phase 2 start
+* [ ] **Scale matching:** Pattern-based or machine learning? — **Owner:** Developer — **Due:** Phase 3 start
+* [ ] **Fretboard diagrams:** Use existing library or SVG custom? — **Owner:** Designer/Developer — **Due:** Phase 3
+* [ ] **Confidence scoring:** Show to users or hide low-confidence results? — **Owner:** Product/UX — **Due:** Phase 2
+
+## 9) Success Metrics
+
+**Phase 1 (Complete):**
+- ✅ Note frequency displayed with percentages
+- ✅ Visual bar charts rendering correctly
+- ✅ Collapsible UI for 10+ notes
+- ✅ Zero external dependencies (pure TypeScript)
+
+**Future Phases (when implemented):**
+- Chord detection accuracy >80%
+- Scale detection accuracy >75%
+- Analysis completes in <2s for typical piece
+- User feedback: "helpful for practice planning" >70%
+
+## 10) Timeline (plan, not commitment)
+
+- ✅ **Phase 1: Note Frequency** (0.5d) - COMPLETE
+- 🔲 **Phase 2: Chord Detection** (1d) - Integrate Tonal.js, identify simultaneous notes, map to shapes
+- 🔲 **Phase 3: Scale Patterns** (1d) - Melodic sequence detection, scale library matching, position suggestions
+- 🔲 **Phase 4: Progressions** (0.5d) - Track transitions, identify common patterns, practice hints
+
+---
+
+### Phase Implementation Details
+
+**Phase 1: Note Frequency Analysis** ✅ COMPLETE (2025-01-19)
+
+**Implemented:**
+- Component: `PracticeAnalysisDisplay.tsx` (replaced `NoteDataDisplay.tsx`)
+- Count occurrences of each unique note
+- Calculate percentages: `(count / total) * 100`
+- Sort by frequency (descending)
+- Visual bar charts with relative widths: `width: (count / maxCount) * 100%`
+- Collapsible "Show all" button for 10+ notes
+- Displays: "C4: 25 times (18%)" with progress bar
+
+**UI Design:**
+```
+┌─────────────────────────────────────────────┐
+│ 🎵 Practice Analysis                        │
+├─────────────────────────────────────────────┤
+│ ▼ Note Frequency (25 unique notes)          │
+│   C4: ████████ 25 times (18%)               │
+│   E4: ██████ 18 times (13%)                 │
+│   G4: █████ 15 times (11%)                  │
+│   [+ Show 22 more notes]                    │
+└─────────────────────────────────────────────┘
+```
+
+**Phase 2: Chord Shape Detection** 🔲 PLACEHOLDER (Future)
+
+**Algorithm (planned):**
+1. Group notes by time window (±50ms for simultaneous)
+2. Extract unique pitch classes: `[C, E, G]` → C major triad
+3. Use Tonal.js `Chord.detect()` to identify chord name
+4. Map to guitar shapes using chord database (open position, barre chords)
+5. Calculate confidence based on number of notes, timing consistency
+
+**Dependencies:**
+- `npm install tonal` - Music theory library for chord detection
+- Or custom chord database (JSON file with common guitar chords)
+
+**UI Mockup:**
+```
+▼ Chord Shapes (5 detected)
+  Measure 4: C major (x32010)
+    ╒═════════
+    │ o o o o
+    ├─────────
+    │ ┃ ┃ ┃ │
+    │ 1 2 3 │  [Fretboard diagram]
+    ...
+```
+
+**Phase 3: Scale Pattern Detection** 🔲 PLACEHOLDER (Future)
+
+**Algorithm (planned):**
+1. Identify melodic sequences (consecutive notes, same measure or phrase)
+2. Extract pitch sequence: `[C, D, E, F, G]` → ascending 5 notes
+3. Match against scale library (major, minor, pentatonic, modes)
+4. Calculate pattern confidence (length, completeness)
+5. Suggest fretboard positions (open position, Position II-XII)
+
+**Scale Library:**
+- C major: `[C, D, E, F, G, A, B]`
+- A minor pentatonic: `[A, C, D, E, G]`
+- Dorian, Mixolydian, etc.
+
+**UI Mockup:**
+```
+▼ Scale Patterns (3 detected)
+  Measures 8-12: C major scale
+    Position 1 (open position)
+    [Fretboard position diagram]
+    Notes: C-D-E-F-G (5/7 notes, 71% confidence)
+```
+
+**Phase 4: Progression Analysis** 🔲 PLACEHOLDER (Future)
+
+**Algorithm (planned):**
+1. Extract chord sequence from Phase 2 results
+2. Identify key (most common root, chord family analysis)
+3. Convert to Roman numerals: `C-F-G-C` → `I-IV-V-I` in C major
+4. Match against common progressions (I-V-vi-IV, ii-V-I, etc.)
+5. Identify difficult transitions (large shape changes, fret jumps)
+
+**Progression Library:**
+- Pop: I-V-vi-IV, vi-IV-I-V
+- Jazz: ii-V-I, iii-vi-ii-V-I
+- Blues: I-I-I-I-IV-IV-I-I-V-IV-I-I
+
+**UI Mockup:**
+```
+▼ Progressions (2 detected)
+  Verse: I-IV-V-I (C-F-G-C)
+    Common in: Folk, Pop, Rock
+    Practice tip: Focus on F→G transition (fret jump)
+
+  Chorus: vi-IV-I-V (Am-F-C-G)
+    Common in: Pop
+    Practice tip: Smooth open chord changes
+```
+
+---
+
+### Code Locations
+
+**Implemented (Phase 1):**
+- `frontend/src/components/Upload/PracticeAnalysisDisplay.tsx` - Main component
+- `frontend/src/components/Upload/PlaybackPreviewPanel.tsx` - Integration
+
+**Planned (Phases 2-4):**
+- `frontend/src/lib/music-analysis.ts` - Analysis utilities (chord detection, scale matching, progression tracking)
+- `frontend/src/components/Upload/ChordShapeCard.tsx` - Chord shape display with fingerings
+- `frontend/src/components/Upload/ScalePatternCard.tsx` - Scale pattern display with positions
+- `frontend/src/components/Upload/FretboardDiagram.tsx` - Visual fretboard component
+- `frontend/src/data/chords.json` - Guitar chord shape database
+- `frontend/src/data/scales.json` - Musical scale library
+
+---
+
+### Notes for Future Developer
+
+**Picking up Phase 2 (Chord Detection):**
+1. Install Tonal.js: `npm install tonal`
+2. Create `music-analysis.ts` with `detectChords(notes: NoteData[])`
+3. Group notes by time window (±50ms)
+4. Use `Chord.detect()` to identify chord names
+5. Map to guitar shapes using chord database
+6. Update `PracticeAnalysisDisplay.tsx` to call `detectChords()` and display results
+7. Replace placeholder section with actual chord cards
+
+**Key Insight:** Note extraction is solid (Phase 1), all future phases build on top of that data structure.
+
+**Deferred Decisions:**
+- Confidence thresholds (show chords with >70% confidence?)
+- Fretboard diagram library (react-fretboard vs custom SVG?)
+- Scale matching algorithm (pattern-based or ML?)
+- Progression template library (comprehensive vs common only?)
