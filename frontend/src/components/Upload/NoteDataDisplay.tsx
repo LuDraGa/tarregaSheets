@@ -92,7 +92,6 @@ export default function NoteDataDisplay({ musicXmlUrl }: NoteDataDisplayProps) {
       console.log('📊 NoteDataDisplay: scoreLoaded event fired! Score:', score.title)
 
       const extractedNotes: NoteData[] = []
-      let currentTimeMs = 0
 
       score.tracks.forEach((track) => {
         track.staves.forEach((staff) => {
@@ -165,32 +164,28 @@ export default function NoteDataDisplay({ musicXmlUrl }: NoteDataDisplayProps) {
     }
   }, [mounted, musicXmlUrl])
 
-  if (isLoading) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white p-6">
-        <div className="flex items-center gap-3 text-gray-600">
-          <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary" />
-          <span className="text-sm">Extracting note data...</span>
-        </div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-lg border border-red-200 bg-red-50 p-6">
-        <p className="text-sm text-red-700">❌ {error}</p>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-4">
-      {/* Hidden container for alphaTab parsing - alphaTab needs actual rendering space */}
+      {/* Hidden container for alphaTab parsing - MUST be always rendered */}
       <div ref={containerRef} className="absolute -left-[9999px] h-[100px] w-[100px]" />
 
-      {/* Note data display */}
-      <div className="rounded-lg border border-gray-200 bg-white">
+      {isLoading && (
+        <div className="rounded-lg border border-gray-200 bg-white p-6">
+          <div className="flex items-center gap-3 text-gray-600">
+            <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary" />
+            <span className="text-sm">Extracting note data...</span>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-6">
+          <p className="text-sm text-red-700">❌ {error}</p>
+        </div>
+      )}
+
+      {!isLoading && !error && (
+        <div className="rounded-lg border border-gray-200 bg-white">
         <div className="border-b border-gray-200 bg-gray-50 px-4 py-3">
           <h4 className="text-sm font-semibold text-gray-900">
             Note Data ({notes.length} notes)
@@ -248,6 +243,7 @@ export default function NoteDataDisplay({ musicXmlUrl }: NoteDataDisplayProps) {
           </table>
         </div>
       </div>
+      )}
     </div>
   )
 }
