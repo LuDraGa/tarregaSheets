@@ -4,6 +4,7 @@
 
 import axios from 'axios'
 import type { Piece, PieceCreate, PieceUpdate } from '@/types/piece'
+import type { UploadResponse, ValidationResponse } from '@/types/upload'
 import { logApiCall, logApiError } from '@/utils/logger'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -41,7 +42,7 @@ api.interceptors.response.use(
 
 // Pieces API
 export const piecesApi = {
-  list: async (params?: { tag?: string; composer?: string; tuning?: string }) => {
+  list: async (params?: { tag?: string; composer?: string; tuning?: string; archived?: 'true' | 'false' | 'all' }) => {
     const response = await api.get<Piece[]>('/pieces', { params })
     return response.data
   },
@@ -65,6 +66,24 @@ export const piecesApi = {
     await api.delete(`/pieces/${id}`)
   },
 
+  archive: async (id: string) => {
+    const response = await api.post<Piece>(`/pieces/${id}/archive`)
+    return response.data
+  },
+
+  unarchive: async (id: string) => {
+    const response = await api.post<Piece>(`/pieces/${id}/unarchive`)
+    return response.data
+  },
+
+  bulkArchive: async (ids: string[], action: 'archive' | 'unarchive') => {
+    const response = await api.post<{ updated: string[] }>('/pieces/archive/bulk', {
+      piece_ids: ids,
+      action,
+    })
+    return response.data
+  },
+
   addVersion: async (id: string, versionData: any) => {
     const response = await api.post<Piece>(`/pieces/${id}/versions`, versionData)
     return response.data
@@ -77,7 +96,7 @@ export const uploadApi = {
     const formData = new FormData()
     formData.append('file', file)
 
-    const response = await api.post('/upload', formData, {
+    const response = await api.post<UploadResponse>('/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -87,6 +106,13 @@ export const uploadApi = {
           onProgress(progress)
         }
       },
+    })
+    return response.data
+  },
+
+  validateMusicXML: async (xmlContent: string) => {
+    const response = await api.post<ValidationResponse>('/upload/validate-musicxml', {
+      xml_content: xmlContent,
     })
     return response.data
   },

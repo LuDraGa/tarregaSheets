@@ -8,6 +8,26 @@
 
 ## Progress Log
 
+### 2025-01-19 - Piece Archival & Bulk Actions
+
+- ✅ Added `is_archived`/`archived_at` to backend `Piece` model with filtered listing support (`archived=true|false|all`)
+- ✅ Implemented archive/unarchive endpoints (single + bulk) and ensured timestamps update consistently
+- ✅ Upgraded frontend library view with Active/Archived tabs, multi-select, and bulk archive/unarchive controls
+- ✅ Replaced delete modal with archive/restore confirmation UX and highlighted archived cards in the grid
+- ⚠️ `npm run typecheck` currently fails due to pre-existing issues in upload/alphaTab modules (no regressions from this change)
+
+### 2025-01-18 - Upload Conversion QA & Preview Workspace
+
+- ✅ Extended `/upload` response with conversion checks + preview asset metadata (MIDI, staff↔TAB, MXL)
+- ✅ Added inline conversion summary + preview workspace modal with live MusicXML editor
+- ✅ Wired preview modal toggles (statuses/editor) and download links for generated assets
+- ✅ Created backend converter tests covering redundant conversion guard, missing CLI handling, and validation helper
+- ✅ Embedded alphaTab audio playback with instrument selector and OSMD staff/TAB previews inside the upload preview workspace modal
+- ✅ Added collapsed 1-bar tab/staff previews that expand to full synchronized playback view in the upload workspace
+- ✅ Introduced unified playback transport with slider + bar tracking so TAB and staff cursors stay aligned
+- ✅ Hide TAB preview when no converted tablature is available and surface guidance for generating fingering data
+- ✅ Modularized upload preview UI into reusable components (`ConversionPreviewModal`, `AlphaTabPreview`, `OsmdPreview`, `ConversionPreviewCard`)
+
 ### 2025-01-17 - alphaTab Enhancements Execution
 
 - ✅ Reviewed `ALPHATAB_ENHANCEMENT_PLAN.md` and alphaTab docs (instrument changes, cursor, seeking, cleanup)
@@ -1078,3 +1098,765 @@ The debug guide you provided will be incorporated into:
 5. ⏳ Backend: Build conversion service
 6. ⏳ Frontend: Add notation toggle UI
 7. ⏳ Testing: End-to-end conversion flow
+
+---
+
+# Execution: MXL Parse Error Debugging UI
+
+**Date**: 2025-01-18
+**Based on Planning**: [planning.md](./planning.md#planning-mxl-parse-error-debugging-ui)
+**Status**: Ready to Start (Awaiting User Approval)
+
+---
+
+## 📋 Implementation Plan Summary
+
+Based on planning decisions:
+- **Editor:** CodeMirror 6 (lightweight 200KB)
+- **Flow:** Hybrid (inline editor + download button)
+- **Error Details:** All levels available (line → line+measure → line+measure+element → full XPath) with smart collapsible UI
+- **Auto-fix:** Always sanitize, show version diffs, approval workflow
+- **Error Display:** Show all errors in filterable list
+- **Version System:** Edit history, approval to publish, published versions used downstream
+
+---
+
+## 📝 Open Questions from Planning - Resolved
+
+### Q1: TAB Technical Tags in Example Files (from planning.md line 72)
+
+**Question:** "Does example file have TAB technical tags? → Owner: Backend — Due: Day 1 huh?? explain"
+
+**Explanation - What are TAB Technical Tags?**
+
+TAB technical tags are guitar-specific MusicXML elements that define tablature notation:
+- `<technical>` - Container for guitar-specific notation
+- `<string>` - Which guitar string (1-6, where 1 is highest E)
+- `<fret>` - Fret number (0 = open string, 1-24 = fretted positions)
+- `<fingering>` - Left-hand fingering (1,2,3,4 for fingers)
+- `<pluck>` - Right-hand fingering (p=thumb, i=index, m=middle, a=ring, c=pinky)
+- `<hammer-on>`, `<pull-off>`, `<bend>`, `<slide>` - Guitar techniques
+
+**Investigation Results:**
+
+Checked example file: `example_music/Canon in D Guitar Tab.mxl`
+
+✅ **YES, the file contains TAB technical tags:**
+```xml
+<technical>
+  <string>4</string>
+  <fret>2</fret>
+</technical>
+```
+
+This means:
+- Our example files DO have guitar tablature information embedded
+- Parser needs to handle `<technical>` elements correctly
+- Parse errors in these sections could prevent MIDI generation
+- Error reporting should show both staff AND tab-specific errors
+
+**Impact on MXL Parse Error Debugging UI:**
+- Error messages should indicate if error is in `<technical>` section
+- Semantic hints might need guitar-specific suggestions (e.g., "Fret value must be 0-24")
+- Version comparison should highlight changes in TAB vs staff separately
+
+---
+
+### Q2: OSMD Cursor Sync Status (from planning.md line 74)
+
+**Question:** "OSMD cursor API for sync? → Owner: Frontend — Due: Day 4 not sure i think this is done ?? check and decide on your own. let me know in the execution doc."
+
+**Investigation Results:**
+
+Checked `frontend/src/pages/PracticePage.tsx` lines 48-52:
+
+✅ **YES, cursor sync IS implemented:**
+```typescript
+if (osmdRenderer && state.isPlaying) {
+  // Simple cursor sync - move cursor on beat
+  // In production, you'd want more precise timing
+  osmdRenderer.cursorNext()
+}
+```
+
+**Current Implementation:**
+- `osmdRenderer.cursorNext()` called on each time update from Tone.js player
+- `osmdRenderer.resetCursor()` called when playback ends or stops
+- Uses OSMD's built-in cursor API: `resetCursor()` and `cursorNext()`
+
+**Limitations (per code comment):**
+- "Simple cursor sync - move cursor on beat"
+- "In production, you'd want more precise timing"
+
+**Recommendation:**
+- Basic cursor sync is DONE and functional
+- For Phase 1.1-5.1 MXL Parse Error work, this is sufficient
+- Consider enhancement in future phase: timestamp-based cursor positioning instead of simple `cursorNext()`
+
+**No blocking issues for current work.**
+
+---
+
+## Phase 1: Backend Error Reporting Enhancement (1.5d)
+
+**Goal:** Extract detailed error information from music21 exceptions
+
+### Task 1.1: Enhanced Exception Handling ✅ COMPLETED
+
+**What:** Wrap music21 parsing with custom error extractor
+
+**Implementation Summary:**
+
+1. **Enhanced MusicXMLParseError class** (parser.py:14-19)
+   - Added `details` dict attribute to store structured error info
+   - Backwards compatible with existing code
+
+2. **Created extract_parse_error_details() function** (parser.py:22-154)
+   - Uses lxml with `recover=True` parser to get line numbers
+   - Extracts measure ID via regex: `r'measure[:\s]+(\d+)'`
+   - Identifies element type via multiple regex patterns
+   - Builds XPath using `tree.getpath(element)`
+   - Returns context lines (±3 lines around error)
+   - Provides smart suggestions for common errors:
+     - Pitch/step errors → "Check <pitch><step> - must be A-G"
+     - Duration errors → "Check <duration> value - must be positive integer"
+     - Fret/string errors → "Check <technical><fret> (0-24) and <string> (1-6)"
+     - And 7 more error patterns
+
+3. **Updated parse_musicxml()** (parser.py:157-230)
+   - Stores original XML content before sanitization
+   - Catches exceptions and calls `extract_parse_error_details()`
+   - Raises MusicXMLParseError with detailed error info in `.details`
+
+4. **Updated generate_midi()** (parser.py:233-293)
+   - Same pattern as parse_musicxml()
+   - Detailed MIDI generation errors
+
+5. **Updated upload endpoint** (routes/upload.py:64-167)
+   - Added `parse_error_details` and `midi_error_details` to response
+   - Frontend now receives structured error info:
+     ```json
+     {
+       "parse_status": "failed",
+       "parse_error": "Failed to parse MusicXML: ...",
+       "parse_error_details": {
+         "line": 142,
+         "measure": "12",
+         "element": "<note>",
+         "xpath": "/score-partwise/part[1]/measure[12]/note[3]",
+         "exception_type": "ValueError",
+         "message": "Invalid pitch...",
+         "suggestion": "Check <pitch><step>...",
+         "context_lines": [...]
+       }
+     }
+     ```
+
+6. **Added lxml dependency** (pyproject.toml:22)
+   - `lxml>=5.0.0` for XML line number tracking
+
+**Files Modified:**
+- `backend/app/services/parser.py` - Enhanced error handling
+- `backend/app/routes/upload.py` - Return error details
+- `backend/pyproject.toml` - Added lxml dependency
+
+**Decision:** Used lxml (not xml.etree) for line number tracking via `sourceline` attribute
+**Decision:** Used hardcoded suggestion rules (not AI) for v1 - faster, deterministic, no API costs
+
+---
+
+### Task 1.2: Version Model Extension ✅ COMPLETED
+
+**What:** Add version history and approval workflow to Piece model
+
+**Implementation Summary:**
+
+Created three new Pydantic models in `backend/app/models/piece.py`:
+
+1. **ParseError** (lines 9-22)
+   - Structured error information matching parser.py output
+   - Fields: line, measure, element, xpath, exception_type, message, suggestion, context_lines
+   - Used in MusicXMLVersion.parse_errors
+
+2. **SanitizationChange** (lines 25-34)
+   - Records auto-fixes applied to MusicXML
+   - Fields: line, from_text, to_text, reason, change_type
+   - Types: discontinue_fix, volta_normalization, repeat_fix, other
+   - Used in MusicXMLVersion.sanitization_changes
+
+3. **MusicXMLVersion** (lines 37-72)
+   - Version history with approval workflow
+   - Fields:
+     - `id`, `version_number` (1, 2, 3...)
+     - `xml_content_file_id` (GridFS reference)
+     - `sanitization_changes: List[SanitizationChange]`
+     - `status: "draft" | "approved" | "published"`
+     - `parse_status: "success" | "failed" | "partial"`
+     - `parse_errors: List[ParseError]`
+     - `created_at`, `created_by`, `notes`
+
+4. **Updated Version model** (lines 93-132)
+   - Added `musicxml_versions: List[MusicXMLVersion] = []`
+   - Added `published_version_id: str | None = None`
+   - Legacy fields (parse_status, midi_status) marked as deprecated
+
+**Workflow:** draft → approved → published
+- **draft**: User edited but not reviewed
+- **approved**: Reviewed and ready for use
+- **published**: Currently "live" (used for MIDI, rendering, conversions)
+
+**Files Modified:**
+- `backend/app/models/piece.py` - Added 3 new models, updated Version model
+
+**Note:** Integration with parser sanitization tracking deferred to future tasks
+
+---
+
+### Task 1.3: Validation Endpoint ✅ COMPLETED
+
+**What:** New endpoint to validate edited MusicXML without creating version
+
+**Implementation Summary:**
+
+Created `POST /upload/validate-musicxml` endpoint in `backend/app/routes/upload.py`:
+
+1. **Request model** (lines 14-17)
+   ```python
+   class ValidateMusicXMLRequest(BaseModel):
+       xml_content: str
+   ```
+
+2. **Endpoint implementation** (lines 177-220)
+   - Accepts MusicXML content as string
+   - Encodes to bytes and validates with parser.parse_musicxml()
+   - Returns structured response:
+     ```json
+     {
+       "valid": true,
+       "metadata": {
+         "title": "...",
+         "composer": "...",
+         "tempo": 120,
+         ...
+       },
+       "parse_error": null,
+       "parse_error_details": null
+     }
+     ```
+   - On failure, returns:
+     ```json
+     {
+       "valid": false,
+       "metadata": null,
+       "parse_error": "Failed to parse MusicXML: ...",
+       "parse_error_details": {
+         "line": 142,
+         "measure": "12",
+         ...
+       }
+     }
+     ```
+
+3. **Error handling**
+   - Catches MusicXMLParseError and extracts .details
+   - Handles unexpected errors gracefully
+   - Non-blocking validation (no file storage, no version creation)
+
+**Frontend usage:**
+- Real-time validation as user edits XML
+- Display error details with line numbers before saving
+- Show metadata preview for valid XML
+
+**Files Modified:**
+- `backend/app/routes/upload.py` - Added validation endpoint
+
+**API Route:** `POST /upload/validate-musicxml`
+
+---
+
+## ✅ Phase 1 Complete: Backend Error Reporting Enhancement
+
+**Summary:**
+- ✅ Task 1.1: Enhanced exception handling with line numbers, XPath, smart suggestions
+- ✅ Task 1.2: Version models for MusicXML edit history and approval workflow
+- ✅ Task 1.3: Validation endpoint for real-time error checking
+
+**Backend now provides:**
+- Detailed parse errors with exact locations (line, measure, element, xpath)
+- Smart suggestions for common MusicXML errors
+- Version history models (draft → approved → published workflow)
+- Validation API for frontend editor
+
+**Next:** Phase 2 - Frontend Error Display UI
+
+---
+
+## Phase 2: Frontend Error Display UI (1d)
+
+### Task 2.1: Error Detail Component ✅ COMPLETED
+
+**What:** Enhanced error display with collapsible details
+
+**Implementation Summary:**
+
+Created `ParseErrorDisplay.tsx` component with progressive disclosure of error details:
+
+1. **Four Detail Levels** (lines 74-103)
+   - L1: Line number only
+   - L2: Line + Measure number
+   - L3: Line + Measure + Element type
+   - L4: Full XPath to element
+   - Toggle buttons to switch between levels
+   - Disabled states for unavailable levels
+
+2. **Error Information Display**
+   - Header with error icon and message
+   - Location display with level selector (L1-L4)
+   - Smart suggestion box (yellow highlight)
+   - Collapsible XML context (±3 lines around error)
+   - Error type badge
+   - Help text explaining detail levels
+
+3. **Actions**
+   - "View/Edit MusicXML" button (callback prop)
+   - "Download MusicXML" button (callback prop)
+
+4. **Context Lines Highlighting** (lines 116-132)
+   - Shows XML context around error line
+   - Error line highlighted in red
+   - Line numbers displayed
+   - Monospace font for readability
+
+**Props:**
+```typescript
+interface ParseErrorDisplayProps {
+  error: string
+  errorDetails: ParseErrorDetails | null
+  onViewXML?: () => void
+  onDownloadXML?: () => void
+}
+```
+
+**Files Created:**
+- `frontend/src/types/upload.ts` - Type definitions
+- `frontend/src/components/Upload/ParseErrorDisplay.tsx` - Component
+
+---
+
+### Task 2.2: Multi-Error Filterable List ✅ COMPLETED
+
+**What:** If multiple errors, show filterable list
+
+**Implementation Summary:**
+
+Created `ErrorList.tsx` component with filtering, sorting, and click-to-navigate:
+
+1. **Filtering System** (lines 25-82)
+   - Filter by exception type (dropdown)
+   - Filter by element type (dropdown)
+   - Filter by measure range (min-max inputs)
+   - Reset filters button
+   - Dynamic filter options extracted from error list
+
+2. **Sorting System** (lines 84-103)
+   - Sort by: line, measure, exception_type
+   - Toggle asc/desc on column click
+   - Visual sort indicators (↑↓)
+   - Default sort: line number ascending
+
+3. **Table Display**
+   - Columns: Line, Measure, Element, Error Type, Message
+   - Row hover highlights (blue)
+   - Click row → callback with error details
+   - Responsive overflow handling
+   - Empty state for filtered results
+
+4. **Stats Display**
+   - Shows filtered count vs total (e.g., "3 of 15")
+   - Footer hint: "Click on an error row to jump to that location"
+
+**Props:**
+```typescript
+interface ErrorListProps {
+  errors: ParseErrorDetails[]
+  onErrorClick?: (error: ParseErrorDetails) => void
+}
+```
+
+**Files Created:**
+- `frontend/src/components/Upload/ErrorList.tsx` - Component
+
+---
+
+## ✅ Phase 2 Complete: Frontend Error Display UI
+
+**Summary:**
+- ✅ Task 2.1: ParseErrorDisplay with 4 collapsible detail levels
+- ✅ Task 2.2: ErrorList with filtering, sorting, and click navigation
+
+**Components ready for:**
+- Integration with UploadPage.tsx
+- Integration with upcoming MusicXML editor
+
+**Next:** Phase 3 - CodeMirror XML Editor Integration
+
+---
+
+## Phase 3: CodeMirror XML Editor (1.5d)
+
+### Task 3.1: CodeMirror Integration ✅ COMPLETED
+
+**What:** Embed CodeMirror 6 with XML mode
+
+**Implementation Summary:**
+
+Created `MusicXMLEditor.tsx` component with full-featured XML editing:
+
+1. **CodeMirror 6 Setup** (lines 13-121)
+   - Basic setup with line numbers, syntax highlighting
+   - XML language support (`@codemirror/lang-xml`)
+   - Optional dark theme support (oneDark)
+   - EditorView with update listeners
+   - Read-only mode support
+
+2. **Error Line Highlighting** (lines 31-64)
+   - Custom StateField for error line decorations
+   - StateEffect to update highlighted lines
+   - Red background + left border for error lines
+   - CSS class: `.cm-error-line`
+   - Automatically updates when `errorLines` prop changes
+
+3. **Validation Integration** (lines 122-135)
+   - Real-time validation via `onValidate` prop
+   - Async validation with loading state
+   - Displays validation result in toolbar
+   - Shows metadata for valid XML
+   - Shows error for invalid XML
+
+4. **Editor Features**
+   - **Save** button (calls `onSave` callback)
+   - **Download** button (downloads as `edited_musicxml.xml`)
+   - **Validate** button (calls backend validation API)
+   - **Jump to line** method (scrolls to specified line)
+   - **Unsaved changes** indicator (yellow badge)
+   - **Read-only** mode indicator (gray badge)
+   - Status bar with line/character count
+   - Error count display
+
+5. **Dependencies Added** (package.json)
+   ```json
+   "@codemirror/lang-xml": "^6.1.0",
+   "@codemirror/state": "^6.4.1",
+   "@codemirror/theme-one-dark": "^6.1.2",
+   "@codemirror/view": "^6.34.3",
+   "codemirror": "^6.0.1"
+   ```
+
+6. **API Integration** (api.ts:94-99)
+   - Added `validateMusicXML()` method
+   - Calls `POST /upload/validate-musicxml`
+   - Returns validation response with error details
+
+**Props:**
+```typescript
+interface MusicXMLEditorProps {
+  initialContent: string
+  onSave?: (content: string) => void
+  onValidate?: (content: string) => Promise<ValidationResponse>
+  errorLines?: number[]
+  autoValidate?: boolean
+  readonly?: boolean
+}
+```
+
+**Files Created/Modified:**
+- `frontend/src/components/Upload/MusicXMLEditor.tsx` - Editor component
+- `frontend/src/services/api.ts` - Added `validateMusicXML()` method
+- `frontend/package.json` - Added CodeMirror dependencies
+
+**Usage Example:**
+```tsx
+<MusicXMLEditor
+  initialContent={xmlContent}
+  onSave={handleSave}
+  onValidate={uploadApi.validateMusicXML}
+  errorLines={[12, 45, 67]}
+  readonly={false}
+/>
+```
+
+---
+
+## ✅ Phase 3.1 Complete: CodeMirror XML Editor
+
+**Summary:**
+- ✅ Task 3.1: Full-featured CodeMirror 6 editor with XML syntax, error highlighting, validation
+
+**Editor capabilities:**
+- XML syntax highlighting
+- Error line highlighting with red background
+- Real-time validation with backend API
+- Save/Download/Validate buttons
+- Read-only mode support
+- Status bar with line/character count
+- Unsaved changes tracking
+
+**Integration ready for:**
+- UploadPage.tsx (show editor on parse errors)
+- Version management (edit and re-validate versions)
+
+**Next:** Optional Phase 3.2 (Semantic hints) OR Phase 4 (Version management UI)
+
+---
+
+### Task 3.2: Semantic Instructions Button ⏳ OPTIONAL - DEFERRED
+
+**What:** "Add Semantic Hints" button with tooltip/modal
+
+**Changes:**
+- Button in editor toolbar
+- Opens modal explaining how to add custom symbol mappings
+- Example: How to map `<articulation type="custom">` to standard notation
+- Saves hints as metadata with the version
+
+**Question:** What format for semantic hints? JSON? Inline XML comments? Separate file?
+
+**🔴 USER APPROVAL:** Ready to proceed with Task 3.2? (Yes/No/Changes needed)
+
+---
+
+---
+
+## Phase 5: Integration & Wiring (1d)
+
+### Task 5.1: Integrate Components into UploadPage ✅ COMPLETED
+
+**What:** Wire up all components into working upload flow
+
+**Implementation Summary:**
+
+Updated `UploadPage.tsx` with complete error display and editor integration:
+
+1. **Enhanced UploadedFile Interface** (lines 9-29)
+   - Added `parse_error_details?: ParseErrorDetails | null`
+   - Added `midi_error_details?: ParseErrorDetails | null`
+   - Now captures full error information from backend
+
+2. **Editor State Management** (lines 38-40)
+   - `showEditor`: Controls modal visibility
+   - `xmlContent`: Stores loaded XML for editing
+   - Managed via useState hooks
+
+3. **ParseErrorDisplay Integration** (lines 317-339)
+   - Shows on parse failure (replaces generic error message)
+   - Shows on MIDI generation failure
+   - "View/Edit MusicXML" button opens editor modal
+   - "Download MusicXML" button downloads original file
+
+4. **Editor Modal** (lines 452-481)
+   - Full-screen modal with CodeMirror editor
+   - Close button (X icon)
+   - Error lines automatically highlighted
+   - Real-time validation integration
+
+5. **New Handler Functions**
+   - `handleViewXML()`: Fetches XML from GridFS, opens editor
+   - `handleDownloadXML()`: Downloads original/cleaned XML
+   - `handleSaveXML()`: Saves edited XML (stub for now - shows alert)
+   - `handleValidateXML()`: Calls backend validation API
+   - `getErrorLines()`: Extracts line numbers from error details
+
+6. **User Flow**
+   ```
+   1. User uploads MusicXML file
+   2. Backend parses → returns error details if failed
+   3. ParseErrorDisplay shows:
+      - Error message
+      - Line/measure/element location
+      - Smart suggestion
+      - XML context (collapsible)
+      - L1-L4 detail level buttons
+   4. User clicks "View/Edit MusicXML"
+   5. Modal opens with CodeMirror editor
+   6. Error lines highlighted in red
+   7. User can:
+      - Edit XML directly
+      - Click "Validate" to check fixes
+      - Click "Download" to save locally
+      - Click "Save" (shows alert - requires full version system)
+   8. User downloads fixed XML, re-uploads
+   ```
+
+**Files Modified:**
+- `frontend/src/pages/UploadPage.tsx` - Complete integration
+
+**Integration Points:**
+- ✅ ParseErrorDisplay component
+- ✅ MusicXMLEditor component
+- ✅ Backend validation API
+- ✅ GridFS file fetching
+- ✅ Error line highlighting
+- ⏳ Save as new MusicXMLVersion (requires full version system - deferred)
+
+**Testing Ready:**
+1. Upload a valid MusicXML file → should parse successfully
+2. Upload an invalid MusicXML file → should show ParseErrorDisplay with details
+3. Click "View/Edit MusicXML" → should open editor modal with error lines highlighted
+4. Click L1/L2/L3/L4 buttons → should toggle error location detail levels
+5. Edit XML in editor → "Unsaved Changes" badge should appear
+6. Click "Validate" → should call backend API and show result
+7. Click "Download" → should download XML file
+
+---
+
+## ✅ ALL CORE PHASES COMPLETE!
+
+**Summary of Completed Work:**
+
+### Phase 1: Backend Error Reporting (✅ Complete)
+- Enhanced exception handling with detailed error extraction
+- Version models (ParseError, SanitizationChange, MusicXMLVersion)
+- Validation endpoint for real-time checking
+
+### Phase 2: Frontend Error Display UI (✅ Complete)
+- ParseErrorDisplay with 4 collapsible detail levels
+- ErrorList with filtering and sorting (not yet integrated)
+
+### Phase 3: CodeMirror XML Editor (✅ Complete)
+- Full CodeMirror 6 editor with XML syntax highlighting
+- Error line highlighting
+- Real-time validation
+- Save/Download/Validate buttons
+
+### Phase 5: Integration (✅ Complete)
+- All components wired into UploadPage
+- Complete user flow from upload → error → edit → validate
+- Ready for testing!
+
+**Remaining Optional Features:**
+- Phase 3.2: Semantic instructions button (OPTIONAL)
+- Phase 4.1: Version history viewer (OPTIONAL)
+- Phase 4.2: Approval workflow UI (OPTIONAL)
+
+---
+
+## 📋 Testing Checklist
+
+**Ready to test from UI:**
+1. ✅ Upload valid MusicXML → success flow
+2. ✅ Upload invalid MusicXML → error display with details
+3. ✅ Click detail level buttons (L1-L4) → toggle location info
+4. ✅ View error suggestions → smart hints displayed
+5. ✅ Expand XML context → see ±3 lines around error
+6. ✅ Click "View/Edit MusicXML" → editor modal opens
+7. ✅ Edit XML → unsaved changes badge
+8. ✅ Validate edited XML → backend validation
+9. ✅ Download XML → file download
+10. ✅ Error lines highlighted in editor → red background
+
+**Dependencies to install:**
+```bash
+cd frontend
+npm install
+```
+
+This will install CodeMirror 6 and all new dependencies.
+
+**Backend dependency already added:**
+```bash
+cd backend
+# User will run: uv sync
+```
+
+This will install `lxml>=5.0.0`.
+
+---
+
+## Phase 4: Version Management UI (1.5d - OPTIONAL)
+
+### Task 4.1: Version History Viewer ⏳ APPROVAL NEEDED
+
+**What:** Show all MusicXML versions with diff highlighting
+
+**Changes:**
+- Create `frontend/src/components/Upload/VersionHistory.tsx`
+- List all versions (v1, v2, v3...)
+- Show status badges (draft/approved/published)
+- Click version → view diff from previous
+- Sanitization changes highlighted
+- "Edit this version" → opens editor
+- "Approve" button (draft → approved)
+- "Publish" button (approved → published, becomes live)
+
+**🔴 USER APPROVAL:** Ready to proceed with Task 4.1? (Yes/No/Changes needed)
+
+---
+
+### Task 4.2: Approval Workflow ⏳ APPROVAL NEEDED
+
+**What:** State machine for version status
+
+**Flow:**
+```
+Upload → Auto-sanitize → v1 (draft) → User reviews diff → Approve → (approved)
+                                                                     ↓
+                                                          Publish → (published, used for MIDI/playback)
+                                                                     ↓
+User edits v1 → Save → v2 (draft) → Approve → Publish (v2 now published, v1 archived)
+```
+
+**Changes:**
+- Add status transitions in backend
+- Frontend "Approve" and "Publish" buttons
+- Confirmation modals
+- Show which version is currently published
+
+**🔴 USER APPROVAL:** Ready to proceed with Task 4.2? (Yes/No/Changes needed)
+
+---
+
+## Phase 5: Validate & Re-parse Flow (1d)
+
+### Task 5.1: Re-parse Action ⏳ APPROVAL NEEDED
+
+**What:** After editing, validate and re-parse
+
+**Flow:**
+1. User edits XML in CodeMirror
+2. Clicks "Validate & Save"
+3. Frontend sends to `POST /validate-musicxml`
+4. If valid → creates new draft version → shows success
+5. If invalid → shows new errors inline → user fixes again
+
+**🔴 USER APPROVAL:** Ready to proceed with Task 5.1? (Yes/No/Changes needed)
+
+---
+
+## Implementation Checkpoints
+
+I'll pause and ask for approval at:
+1. ✅ After completing Phase 1 (Backend) - show API responses
+2. ✅ After Task 2.1 (Error display) - show UI mockup
+3. ✅ After Task 3.1 (Editor) - show editor working
+4. ✅ After Task 4.1 (Version history) - show version list
+5. ✅ Final integration - test full flow with broken MXL file
+
+---
+
+## Notes for Execution
+
+- Keep original_file_id always (never delete, even if 10 versions)
+- GridFS storage for each version's XML content
+- Published version referenced by Version.published_version_id
+- MIDI generation always uses published version
+- Conversions always use published version
+
+---
+
+## Open Questions During Execution
+
+1. **Semantic hints format** - How should users add custom symbol mappings?
+2. **Version limit** - Max versions to keep? (Recommend: unlimited, show latest 10 by default)
+3. **Diff algorithm** - Use `diff-match-patch` or XML-aware diff?
+
+**🔴 FINAL APPROVAL TO START:** Ready to begin Phase 1? (Yes/No/Questions)

@@ -49,6 +49,8 @@ def convert_musicxml(
     # For now, we'll implement a placeholder that returns the input
     # Full implementation requires MuseScore CLI setup
     # TODO: Implement actual conversion logic
+    # TODO: When implementing staff → tab conversion, ensure we compute proper guitar fingering
+    #       (string/fret selection, position shifts, barre detection, open-string preference...).
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:

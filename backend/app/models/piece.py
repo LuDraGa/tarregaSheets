@@ -1,9 +1,75 @@
 """Piece data models."""
 
-from datetime import datetime
-from typing import Literal
+from datetime import datetime, timezone
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+class ParseError(BaseModel):
+    """Structured parse error information."""
+
+    line: int | None = Field(None, description="Line number in XML")
+    measure: str | None = Field(None, description="Measure number/ID")
+    element: str | None = Field(None, description="Element type (e.g., '<note>')")
+    xpath: str | None = Field(None, description="Full XPath to problematic element")
+    exception_type: str = Field(..., description="Exception class name")
+    message: str = Field(..., description="Error message")
+    suggestion: str | None = Field(None, description="Suggested fix")
+    context_lines: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Context lines around error [{line_num, content}]"
+    )
+
+
+class SanitizationChange(BaseModel):
+    """Record of a sanitization/auto-fix applied to MusicXML."""
+
+    line: int | None = Field(None, description="Line number where change was made")
+    from_text: str = Field(..., description="Original text")
+    to_text: str = Field(..., description="Sanitized text")
+    reason: str = Field(..., description="Why this change was made")
+    change_type: Literal["discontinue_fix", "volta_normalization", "repeat_fix", "other"] = Field(
+        ..., description="Category of sanitization"
+    )
+
+
+class MusicXMLVersion(BaseModel):
+    """Version of MusicXML with edit history and approval workflow."""
+
+    id: str = Field(..., description="Version ID")
+    version_number: int = Field(..., description="Version number (1, 2, 3...)", ge=1)
+    xml_content_file_id: str = Field(..., description="GridFS file ID for XML content")
+
+    # Track sanitization changes
+    sanitization_changes: list[SanitizationChange] = Field(
+        default_factory=list,
+        description="Auto-fixes applied during parsing"
+    )
+
+    # Version approval workflow: draft → approved → published
+    status: Literal["draft", "approved", "published"] = Field(
+        "draft",
+        description="Workflow status (draft=edited but not reviewed, approved=reviewed, published=live)"
+    )
+
+    # Parse status and errors
+    parse_status: Literal["success", "failed", "partial"] = Field(
+        "success",
+        description="Whether this version parses successfully"
+    )
+    parse_errors: list[ParseError] = Field(
+        default_factory=list,
+        description="Detailed parse error information"
+    )
+
+    # Metadata
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When this version was created"
+    )
+    created_by: str | None = Field(None, description="User who created this version")
+    notes: str = Field("", description="User notes about this version")
 
 
 class Asset(BaseModel):
@@ -47,12 +113,22 @@ class Version(BaseModel):
         None, description="GridFS file ID of original upload (for reprocessing)"
     )
 
-    # Parse and MIDI generation status
+    # Parse and MIDI generation status (legacy - use musicxml_versions for detailed tracking)
     parse_status: Literal["success", "failed", "partial", "pending"] = Field(
         "success", description="MusicXML parsing status"
     )
     midi_status: Literal["success", "failed", "partial", "pending"] = Field(
         "success", description="MIDI generation status"
+    )
+
+    # MusicXML version history and approval workflow
+    musicxml_versions: list[MusicXMLVersion] = Field(
+        default_factory=list,
+        description="Edit history of MusicXML with approval workflow"
+    )
+    published_version_id: str | None = Field(
+        None,
+        description="Which MusicXML version is 'live' (used for MIDI, rendering, etc.)"
     )
 
 
@@ -65,7 +141,22 @@ class Piece(BaseModel):
     tags: list[str] = Field(default_factory=list, description="Tags (e.g., 'classical', 'advanced')")
     tuning: str = Field("EADGBE", description="Guitar tuning (e.g., 'EADGBE', 'DADGAD')")
     capo: int = Field(0, description="Capo position (0-12)", ge=0, le=12)
-    created_at: datetime = Field(default_factory=datetime.now, description="Creation timestamp")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Creation timestamp"
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Last update timestamp"
+    )
+    is_archived: bool = Field(
+        False,
+        description="Whether the piece is archived (soft deleted)"
+    )
+    archived_at: datetime | None = Field(
+        None,
+        description="When the piece was archived"
+    )
     versions: list[Version] = Field(default_factory=list, description="Versions of this piece")
 
 

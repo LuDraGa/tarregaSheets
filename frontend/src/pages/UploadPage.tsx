@@ -1,27 +1,20 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { piecesApi, uploadApi } from '@/services/api'
+import ParseErrorDisplay from '@/components/Upload/ParseErrorDisplay'
+import ConversionPreviewModal from '@/components/Upload/ConversionPreviewModal'
+import {
+  buildConversionEntries,
+  buildFileUrl,
+  getDefaultConversionChecks,
+  getDefaultPreviewAssets,
+  statusStyles,
+} from '@/components/Upload/conversionPreviewHelpers'
+import type { UploadResponse } from '@/types/upload'
 
-interface UploadedFile {
-  file_id: string | null
-  original_file_id: string
-  musicxml_file_id: string | null
-  midi_file_id: string | null
-  filename: string
-  metadata: {
-    title: string
-    composer: string
-    tempo: number
-    key: string
-    time_signature: string
-    has_tablature: boolean
-  }
-  parse_status: 'pending' | 'success' | 'failed'
-  parse_error?: string | null
-  midi_status: 'pending' | 'success' | 'failed' | 'skipped'
-  midi_error?: string | null
-}
+type UploadedFile = UploadResponse
+type PreviewTab = 'statuses' | 'editor'
 
 export default function UploadPage() {
   const navigate = useNavigate()
@@ -29,6 +22,10 @@ export default function UploadPage() {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Preview workspace state
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false)
+  const [previewInitialTab, setPreviewInitialTab] = useState<PreviewTab>('statuses')
 
   // Form state
   const [title, setTitle] = useState('')
@@ -49,39 +46,51 @@ export default function UploadPage() {
         setUploadProgress(progress)
       })
 
-      const metadata = response.metadata ?? {
+      const fallbackMetadata = {
         title: file.name.replace(/\.[^.]+$/, ''),
         composer: '',
         tempo: 120,
         key: 'C',
         time_signature: '4/4',
         has_tablature: false,
+        has_staff_notation: true,
+        notation_type: 'staff' as const,
       }
 
+      const metadata = response.metadata
+        ? {
+            ...fallbackMetadata,
+            ...response.metadata,
+          }
+        : fallbackMetadata
+
       const normalized: UploadedFile = {
+        ...response,
         file_id: response.file_id ?? null,
-        original_file_id: response.original_file_id,
         musicxml_file_id: response.musicxml_file_id ?? null,
         midi_file_id: response.midi_file_id ?? null,
-        filename: response.filename,
         metadata,
-        parse_status: response.parse_status ?? 'pending',
-        parse_error: response.parse_error,
-        midi_status: response.midi_status ?? 'pending',
-        midi_error: response.midi_error,
+        conversion_checks: {
+          ...getDefaultConversionChecks(),
+          ...(response.conversion_checks ?? {}),
+        },
+        preview_assets: {
+          ...getDefaultPreviewAssets(),
+          ...(response.preview_assets ?? {}),
+        },
       }
 
       setUploadedFile(normalized)
+      setIsPreviewOpen(true)
+      setPreviewInitialTab('statuses')
 
       // Prefill form with metadata
       setTitle(metadata.title)
       setComposer(metadata.composer)
 
+      // Don't show generic error anymore - we have fancy error display now
       if (normalized.parse_status !== 'success') {
-        setError(
-          `MusicXML parser reported an issue: ${normalized.parse_error || 'Unknown error'}. ` +
-            'The original file was stored, but you will need to fix it before saving a piece.'
-        )
+        // Error will be shown via ParseErrorDisplay component
       } else if (normalized.midi_status !== 'success') {
         setError(
           `MIDI generation issue: ${normalized.midi_error || 'Unknown error'}. ` +
@@ -115,6 +124,47 @@ export default function UploadPage() {
     maxFiles: 1,
     disabled: uploading || !!uploadedFile,
   })
+
+  const conversionEntries = useMemo(() => {
+    if (!uploadedFile) return []
+    const checks = {
+      ...getDefaultConversionChecks(),
+      ...(uploadedFile.conversion_checks ?? {}),
+    }
+    return buildConversionEntries(checks)
+  }, [uploadedFile])
+
+  const previewAssets = useMemo(() => {
+    if (!uploadedFile) return getDefaultPreviewAssets()
+    return {
+      ...getDefaultPreviewAssets(),
+      ...(uploadedFile.preview_assets ?? {}),
+    }
+  }, [uploadedFile])
+
+  const handleViewXML = () => {
+    if (!uploadedFile) return
+    setPreviewInitialTab('editor')
+    setIsPreviewOpen(true)
+  }
+
+  const handleDownloadXML = () => {
+    if (!uploadedFile) return
+
+    const fallbackId = uploadedFile.musicxml_file_id || uploadedFile.original_file_id
+    const fileUrl = buildFileUrl(previewAssets.musicxml_file_id || fallbackId)
+    if (!fileUrl) {
+      setError('No MusicXML file available for download.')
+      return
+    }
+
+    const a = document.createElement('a')
+    a.href = fileUrl
+    a.download = uploadedFile.filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
 
   const handleCreatePiece = async () => {
     if (!uploadedFile) return
@@ -164,6 +214,8 @@ export default function UploadPage() {
     setComposer('')
     setTags('')
     setError(null)
+    setIsPreviewOpen(false)
+    setPreviewInitialTab('statuses')
   }
 
   return (
@@ -172,7 +224,8 @@ export default function UploadPage() {
         <h2 className="text-3xl font-bold text-gray-900">Upload Sheet Music</h2>
       </div>
 
-      {error && (
+      {/* Generic error banner (for non-parse errors) */}
+      {error && !uploadedFile?.parse_error_details && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
           <p className="text-sm text-red-700">❌ {error}</p>
         </div>
@@ -232,24 +285,95 @@ export default function UploadPage() {
         </>
       ) : (
         <>
+          {/* Parse Error Display - NEW */}
+          {uploadedFile.parse_status === 'failed' && uploadedFile.parse_error && (
+            <div className="mb-6">
+              <ParseErrorDisplay
+                error={uploadedFile.parse_error}
+                errorDetails={uploadedFile.parse_error_details || null}
+                onViewXML={handleViewXML}
+                onDownloadXML={handleDownloadXML}
+              />
+            </div>
+          )}
+
+          {/* MIDI Error Display */}
+          {uploadedFile.parse_status === 'success' && uploadedFile.midi_status === 'failed' && uploadedFile.midi_error && (
+            <div className="mb-6">
+              <ParseErrorDisplay
+                error={uploadedFile.midi_error}
+                errorDetails={uploadedFile.midi_error_details || null}
+                onViewXML={handleViewXML}
+                onDownloadXML={handleDownloadXML}
+              />
+            </div>
+          )}
+
           {/* Status Message */}
-          <div
-            className={`mb-6 rounded-lg p-4 border ${
-              uploadedFile.parse_status === 'success' ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'
-            }`}
-          >
-            {uploadedFile.parse_status === 'success' ? (
+          {uploadedFile.parse_status === 'success' && (
+            <div className="mb-6 rounded-lg p-4 border bg-green-50 border-green-200">
               <p className="text-sm text-green-700">
                 ✅ File processed successfully! Now add details to your piece.
               </p>
-            ) : (
-              <p className="text-sm text-yellow-700">
-                ⚠️ We stored your original upload, but the MusicXML parser reported an issue:
-                {' '}
-                <span className="font-medium">{uploadedFile.parse_error || 'Unknown parsing error'}</span>.
-                Please correct the file and re-upload before saving.
-              </p>
-            )}
+            </div>
+          )}
+
+          {/* Conversion Summary */}
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Conversion Checks</h3>
+                <p className="text-sm text-gray-600">
+                  Track automated transformations for this upload. Open the preview workspace for details and live editing.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPreviewOpen(true)
+                  setPreviewInitialTab('statuses')
+                }}
+                className="inline-flex items-center justify-center rounded-md border border-primary px-4 py-2 text-sm font-medium text-primary hover:bg-primary hover:text-white transition-colors"
+              >
+                Open Preview Workspace
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {conversionEntries.map(({ key, label, description, check }) => {
+                const variant = statusStyles[check.status] || statusStyles.pending
+                const detail = check.error || check.reason || check.note
+
+                return (
+                  <div
+                    key={key}
+                    className={`rounded-lg border p-4 transition-all ${variant.borderClass}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">{label}</p>
+                        <p className="text-xs text-gray-500">{description}</p>
+                      </div>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${variant.badge}`}
+                      >
+                        {variant.icon} {check.status}
+                      </span>
+                    </div>
+                    {check.duration_ms && (
+                      <p className="mt-2 text-xs text-gray-500">
+                        Took {check.duration_ms} ms
+                      </p>
+                    )}
+                    {detail && (
+                      <p className={`mt-2 text-xs ${variant.textClass}`}>
+                        {detail}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
 
           {/* Metadata Form */}
@@ -279,17 +403,12 @@ export default function UploadPage() {
                   </span>
                 </div>
               </div>
-              {uploadedFile.midi_status !== 'success' && uploadedFile.midi_status !== 'pending' && (
-                <p className="text-xs text-yellow-700 mt-3">
-                  ⚠️ MIDI generation issue: {uploadedFile.midi_error || 'Unknown error'}. The piece will be saved without playback until the file is fixed.
-                </p>
-              )}
             </div>
 
             {uploadedFile.parse_status !== 'success' && (
               <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4">
                 <p className="text-sm text-red-700">
-                  You cannot create a practice-ready piece until the MusicXML parses successfully. Upload a corrected file or try a different score.
+                  You cannot create a practice-ready piece until the MusicXML parses successfully. Use the "View/Edit MusicXML" button above to fix errors, or upload a corrected file.
                 </p>
               </div>
             )}
@@ -358,6 +477,13 @@ export default function UploadPage() {
           </div>
         </>
       )}
+
+      <ConversionPreviewModal
+        uploadedFile={uploadedFile}
+        isOpen={isPreviewOpen}
+        initialTab={previewInitialTab}
+        onClose={() => setIsPreviewOpen(false)}
+      />
     </div>
   )
 }

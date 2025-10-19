@@ -1,11 +1,29 @@
 """Pieces API endpoints."""
 
+from datetime import datetime, timezone
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
 
 from app.db.connection import get_database
 from app.models.piece import Piece, PieceCreate, PieceUpdate
 
 router = APIRouter()
+
+
+class BulkArchiveRequest(BaseModel):
+    """Request payload for bulk archive/unarchive actions."""
+
+    piece_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        description="IDs of pieces to update"
+    )
+    action: Literal["archive", "unarchive"] = Field(
+        ...,
+        description="Which archival action to apply"
+    )
 
 
 @router.post("/", response_model=Piece, status_code=status.HTTP_201_CREATED)
@@ -38,9 +56,17 @@ async def list_pieces(
     tag: str | None = None,
     composer: str | None = None,
     tuning: str | None = None,
+    archived: str = "false",
 ):
     """List all pieces with optional filters."""
     db = get_database()
+
+    archived_filter = (archived or "false").lower()
+    if archived_filter not in {"true", "false", "all"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid 'archived' filter. Use 'true', 'false', or 'all'."
+        )
 
     # Build query
     query = {}
@@ -50,9 +76,14 @@ async def list_pieces(
         query["composer"] = {"$regex": composer, "$options": "i"}  # Case-insensitive search
     if tuning:
         query["tuning"] = tuning
+    if archived_filter == "true":
+        query["is_archived"] = True
+    elif archived_filter == "false":
+        query["is_archived"] = {"$ne": True}
 
     # Fetch pieces
-    cursor = db.pieces.find(query).sort("created_at", -1)
+    sort_field = "archived_at" if archived_filter == "true" else "created_at"
+    cursor = db.pieces.find(query).sort(sort_field, -1)
     pieces = await cursor.to_list(length=100)
 
     return [Piece(**piece) for piece in pieces]
@@ -82,6 +113,9 @@ async def update_piece(piece_id: str, piece_data: PieceUpdate):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update"
         )
+
+    # Add updated_at timestamp
+    update_data["updated_at"] = datetime.now(timezone.utc)
 
     # Update in MongoDB
     result = await db.pieces.update_one({"id": piece_id}, {"$set": update_data})
@@ -171,14 +205,81 @@ async def add_version(piece_id: str, version_data: dict):
         assets=assets,
     )
 
-    # Add version to piece
+    # Add version to piece and update timestamp
+    from datetime import datetime, timezone
+
     await db.pieces.update_one(
-        {"id": piece_id}, {"$push": {"versions": version.model_dump()}}
+        {"id": piece_id},
+        {
+            "$push": {"versions": version.model_dump()},
+            "$set": {"updated_at": datetime.now(timezone.utc)}
+        }
     )
 
     # Return updated piece
     updated_piece = await db.pieces.find_one({"id": piece_id})
     return Piece(**updated_piece)
+
+
+@router.post("/{piece_id}/archive", response_model=Piece)
+async def archive_piece(piece_id: str):
+    """Archive (soft delete) a piece."""
+    db = get_database()
+
+    now = datetime.now(timezone.utc)
+    result = await db.pieces.update_one(
+        {"id": piece_id},
+        {"$set": {"is_archived": True, "archived_at": now, "updated_at": now}},
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
+
+    piece = await db.pieces.find_one({"id": piece_id})
+    return Piece(**piece)
+
+
+@router.post("/{piece_id}/unarchive", response_model=Piece)
+async def unarchive_piece(piece_id: str):
+    """Restore an archived piece."""
+    db = get_database()
+
+    now = datetime.now(timezone.utc)
+    result = await db.pieces.update_one(
+        {"id": piece_id},
+        {"$set": {"is_archived": False, "archived_at": None, "updated_at": now}},
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
+
+    piece = await db.pieces.find_one({"id": piece_id})
+    return Piece(**piece)
+
+
+@router.post("/archive/bulk")
+async def bulk_archive_pieces(request: BulkArchiveRequest):
+    """Archive or unarchive multiple pieces."""
+    db = get_database()
+
+    # Pre-fetch existing piece IDs to avoid misleading updates
+    cursor = db.pieces.find({"id": {"$in": request.piece_ids}}, {"id": 1, "_id": 0})
+    existing_ids = [doc["id"] async for doc in cursor]
+    if not existing_ids:
+        return {"updated": []}
+
+    now = datetime.now(timezone.utc)
+    update_fields = {"updated_at": now}
+    if request.action == "archive":
+        update_fields["is_archived"] = True
+        update_fields["archived_at"] = now
+    else:
+        update_fields["is_archived"] = False
+        update_fields["archived_at"] = None
+
+    await db.pieces.update_many({"id": {"$in": existing_ids}}, {"$set": update_fields})
+
+    return {"updated": existing_ids}
 
 
 @router.post("/{piece_id}/versions/{version_id}/reprocess", response_model=Piece)

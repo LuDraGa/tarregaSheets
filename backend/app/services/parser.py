@@ -1,17 +1,201 @@
 """MusicXML parsing and MIDI generation using music21."""
 
 import io
+import re
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Any
 
+from lxml import etree
 from music21 import converter, tempo
 
 
 class MusicXMLParseError(Exception):
     """Raised when MusicXML parsing fails."""
 
-    pass
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.details = details or {}
+
+
+def extract_parse_error_details(xml_content: bytes, exception: Exception) -> dict[str, Any]:
+    """
+    Extract detailed error location and context from MusicXML parsing exception.
+
+    Args:
+        xml_content: Original MusicXML content
+        exception: The exception that was raised during parsing
+
+    Returns:
+        dict with error details: line, measure, element, xpath, message, suggestion, context
+    """
+    details: dict[str, Any] = {
+        "line": None,
+        "measure": None,
+        "element": None,
+        "xpath": None,
+        "exception_type": type(exception).__name__,
+        "message": str(exception),
+        "suggestion": None,
+        "context_lines": [],
+    }
+
+    # Try to parse XML with lxml to get line numbers for elements
+    try:
+        parser = etree.XMLParser(recover=True)
+        tree = etree.fromstring(xml_content, parser)
+
+        # Extract measure ID and element info from exception message
+        error_msg = str(exception).lower()
+        exception_name = type(exception).__name__
+
+        # Special handling for ExpanderException and repeat-related errors
+        if exception_name == "ExpanderException" or "repeat" in error_msg or "barline" in error_msg:
+            # Find all repeat elements in the score
+            repeat_elements = tree.xpath("//barline/repeat")
+
+            if repeat_elements:
+                details["element"] = "<barline><repeat>"
+                details["suggestion"] = (
+                    "Found multiple repeat elements in the score. "
+                    "Check that all forward/backward repeats are properly paired. "
+                    "Common issues: missing forward repeat, mismatched repeat directions, "
+                    "invalid ending numbers. Review all repeat locations below:"
+                )
+
+                # Collect all repeat locations
+                repeat_locations = []
+                for repeat_elem in repeat_elements:
+                    # Get parent barline element
+                    barline_elem = repeat_elem.getparent()
+                    # Find the measure containing this barline
+                    measure_elem = barline_elem.getparent()
+
+                    measure_num = measure_elem.get("number", "?")
+                    direction = repeat_elem.get("direction", "?")
+                    line_num = barline_elem.sourceline
+
+                    repeat_locations.append({
+                        "line_num": line_num,
+                        "measure": measure_num,
+                        "direction": direction,
+                        "content": f'<repeat direction="{direction}"/> in measure {measure_num}'
+                    })
+
+                # Use the context_lines field to show all repeat locations
+                details["context_lines"] = repeat_locations
+
+                # Set line to first repeat as a reference
+                if repeat_locations:
+                    details["line"] = repeat_locations[0]["line_num"]
+                    details["measure"] = repeat_locations[0]["measure"]
+
+                return details
+
+        # Common music21 error patterns
+        measure_match = re.search(r'measure[:\s]+(\d+)', error_msg, re.IGNORECASE)
+        if measure_match:
+            details["measure"] = measure_match.group(1)
+
+        # Look for element types in error message
+        element_patterns = [
+            r'<(\w+)>',  # XML tag in error message
+            r'in (\w+) element',
+            r'(\w+) tag',
+            r'invalid (\w+)',
+        ]
+        for pattern in element_patterns:
+            elem_match = re.search(pattern, error_msg)
+            if elem_match:
+                details["element"] = f"<{elem_match.group(1)}>"
+                break
+
+        # Find the problematic element in XML tree
+        problematic_elem = None
+
+        # If we have a measure number, search within that measure
+        if details["measure"]:
+            # Find measure with matching number attribute
+            measures = tree.xpath(f"//measure[@number='{details['measure']}']")
+            if measures:
+                measure_elem = measures[0]
+                details["line"] = measure_elem.sourceline
+
+                # Try to find specific element within measure
+                if details["element"]:
+                    elem_tag = details["element"].strip("<>")
+                    elems = measure_elem.xpath(f".//{elem_tag}")
+                    if elems:
+                        problematic_elem = elems[0]
+
+        # If no specific element found, try to find any mention in error
+        if not problematic_elem and details["element"]:
+            elem_tag = details["element"].strip("<>")
+            elems = tree.xpath(f"//{elem_tag}")
+            if elems:
+                problematic_elem = elems[0]
+
+        # Extract line number and build XPath
+        if problematic_elem is not None:
+            details["line"] = problematic_elem.sourceline
+            details["xpath"] = tree.getpath(problematic_elem)
+
+        # Get context lines around error
+        if details["line"]:
+            lines = xml_content.decode('utf-8', errors='ignore').split('\n')
+            line_num = details["line"] - 1  # 0-indexed
+            start = max(0, line_num - 3)
+            end = min(len(lines), line_num + 4)
+            details["context_lines"] = [
+                {"line_num": i + 1, "content": lines[i].rstrip()}
+                for i in range(start, end)
+            ]
+
+    except Exception as parse_error:
+        # If lxml parsing fails, fall back to regex-based line extraction
+        details["parsing_debug"] = f"lxml parsing failed: {parse_error}"
+
+        # Try to extract line info from original exception
+        line_match = re.search(r'line[:\s]+(\d+)', str(exception), re.IGNORECASE)
+        if line_match:
+            details["line"] = int(line_match.group(1))
+
+            # Get context lines
+            lines = xml_content.decode('utf-8', errors='ignore').split('\n')
+            line_num = details["line"] - 1  # 0-indexed
+            start = max(0, line_num - 3)
+            end = min(len(lines), line_num + 4)
+            details["context_lines"] = [
+                {"line_num": i + 1, "content": lines[i].rstrip()}
+                for i in range(start, end)
+            ]
+
+    # Add smart suggestions based on error patterns
+    error_msg_lower = str(exception).lower()
+
+    if "pitch" in error_msg_lower or "step" in error_msg_lower:
+        details["suggestion"] = "Check <pitch><step> - must be A-G. Check <alter> for accidentals (sharps/flats)."
+    elif "duration" in error_msg_lower:
+        details["suggestion"] = "Check <duration> value - must be a positive integer representing divisions."
+    elif "divisions" in error_msg_lower:
+        details["suggestion"] = "Check <divisions> in <attributes> - must be set before using <duration>."
+    elif "time" in error_msg_lower and "signature" in error_msg_lower:
+        details["suggestion"] = "Check <time><beats> and <beat-type> - must be valid integers (e.g., 4/4)."
+    elif "clef" in error_msg_lower:
+        details["suggestion"] = "Check <clef><sign> and <line> - sign must be G/F/C/TAB, line must be valid."
+    elif "fret" in error_msg_lower or "string" in error_msg_lower:
+        details["suggestion"] = "Check <technical><fret> (0-24) and <string> (1-6 for guitar) values."
+    elif "barline" in error_msg_lower or "repeat" in error_msg_lower:
+        details["suggestion"] = "Check <barline><repeat> direction (forward/backward) and ending numbers."
+    elif "unicode" in error_msg_lower or "encoding" in error_msg_lower:
+        details["suggestion"] = "File may have encoding issues. Ensure UTF-8 encoding without BOM."
+    elif "xml" in error_msg_lower and "syntax" in error_msg_lower:
+        details["suggestion"] = "XML syntax error - check for unclosed tags, invalid characters, or malformed structure."
+    else:
+        details["suggestion"] = "Review the element structure and ensure it follows MusicXML 3.1+ specification."
+
+    return details
 
 
 def parse_musicxml(file_content: bytes, filename: str = "score.xml") -> tuple[dict, bytes]:
@@ -27,12 +211,16 @@ def parse_musicxml(file_content: bytes, filename: str = "score.xml") -> tuple[di
         tuple: (metadata dict, cleaned MusicXML bytes)
 
     Raises:
-        MusicXMLParseError: If parsing fails
+        MusicXMLParseError: If parsing fails (with detailed error info in .details)
     """
+    # Store original content for error reporting
+    original_content = file_content
+
     try:
         # Handle compressed MXL files
         if filename.lower().endswith(".mxl"):
             file_content = _extract_mxl(file_content)
+            original_content = file_content  # Update original after extraction
 
         # Normalize common MusicXML quirks
         file_content = _sanitize_musicxml(file_content)
@@ -74,8 +262,16 @@ def parse_musicxml(file_content: bytes, filename: str = "score.xml") -> tuple[di
             # Clean up temporary file
             Path(tmp_path).unlink(missing_ok=True)
 
+    except MusicXMLParseError:
+        # Re-raise MusicXMLParseError as-is (already formatted)
+        raise
     except Exception as e:
-        raise MusicXMLParseError(f"Failed to parse MusicXML: {e}") from e
+        # Extract detailed error information
+        error_details = extract_parse_error_details(original_content, e)
+        raise MusicXMLParseError(
+            f"Failed to parse MusicXML: {e}",
+            details=error_details
+        ) from e
 
 
 def generate_midi(file_content: bytes, filename: str = "score.xml") -> bytes:
@@ -90,12 +286,16 @@ def generate_midi(file_content: bytes, filename: str = "score.xml") -> bytes:
         MIDI file content as bytes
 
     Raises:
-        MusicXMLParseError: If MIDI generation fails
+        MusicXMLParseError: If MIDI generation fails (with detailed error info in .details)
     """
+    # Store original content for error reporting
+    original_content = file_content
+
     try:
         # Handle compressed MXL files
         if filename.lower().endswith(".mxl"):
             file_content = _extract_mxl(file_content)
+            original_content = file_content  # Update original after extraction
 
         # Normalize common MusicXML quirks
         file_content = _sanitize_musicxml(file_content)
@@ -125,8 +325,16 @@ def generate_midi(file_content: bytes, filename: str = "score.xml") -> bytes:
             # Clean up temporary XML file
             Path(tmp_path).unlink(missing_ok=True)
 
+    except MusicXMLParseError:
+        # Re-raise MusicXMLParseError as-is (already formatted)
+        raise
     except Exception as e:
-        raise MusicXMLParseError(f"Failed to generate MIDI: {e}") from e
+        # Extract detailed error information
+        error_details = extract_parse_error_details(original_content, e)
+        raise MusicXMLParseError(
+            f"Failed to generate MIDI: {e}",
+            details=error_details
+        ) from e
 
 
 def _extract_mxl(mxl_content: bytes) -> bytes:
@@ -248,16 +456,21 @@ def _get_tempo(stream) -> int:
                 return None
             return None
 
-        candidates = [
-            getattr(first_tempo, "number", None),
-            getattr(first_tempo, "numberReal", None),
-        ]
+        # Try getQuarterBPM() FIRST - it normalizes to quarter note BPM
+        # regardless of the beat unit (e.g., 2/2 time uses half notes)
+        candidates = []
 
         if hasattr(first_tempo, "getQuarterBPM"):
             try:
                 candidates.append(first_tempo.getQuarterBPM())
             except Exception:
-                candidates.append(None)
+                pass
+
+        # Fallback to raw number values (but these may be in different beat units!)
+        candidates.extend([
+            getattr(first_tempo, "number", None),
+            getattr(first_tempo, "numberReal", None),
+        ])
 
         for candidate in candidates:
             coerced = _coerce_tempo(candidate)

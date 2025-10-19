@@ -118,9 +118,18 @@ export default function PracticePageAlphaTab() {
   }, [musicXmlAsset, version?.tempo])
 
   const handlePlay = () => {
-    if (rendererRef.current) {
-      rendererRef.current.play()
+    console.log('🎮 handlePlay called', {
+      hasRenderer: !!rendererRef.current,
+      isPlayerReady,
+      playerState,
+    })
+
+    if (!rendererRef.current) {
+      console.error('❌ No renderer available')
+      return
     }
+
+    rendererRef.current.play()
   }
 
   const handlePause = () => {
