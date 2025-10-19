@@ -12,16 +12,121 @@
 
 **Goal:** Separate TAB and Staff notation in upload preview workspace with proper playback controls
 
-#### Tab → Note Data Display
+#### Tab → Guitar Practice Analysis (replacing raw note table)
+
+**Goal Shift:** Instead of raw note data table, provide guitar-focused practice insights:
+- Note frequency analysis (which notes to focus on)
+- Chord shape identification (what chord shapes are used)
+- Scale pattern detection (what scales/positions to practice)
+- Progression patterns (how chords/scales transition)
+
+**Implementation Status:**
 - ✅ Modified `AlphaTabRenderer` to support display modes: `tab-only`, `staff-only`, `both`
-- ✅ Created `NoteDataDisplay` component to extract and show note information from MusicXML
-  - Shows table with: Time, Note Name, Duration, MIDI Pitch, All Guitar Positions, Instrument
-  - Calculates all possible string/fret positions for each note (standard EADGBE tuning)
+- ✅ Created `NoteDataDisplay` component to extract note data from MusicXML
+  - Extracts: Time, Note Name, Duration, MIDI Pitch, All Guitar Positions
   - Uses alphaTab's score parser to extract beat/note data
-- ⚠️ Fixed containerRef mounting issue - container must exist before alphaTab initialization
-  - Moved container div outside conditional rendering
-  - Added mounted state to ensure ref is attached before initialization
-- ✅ Replaced AlphaTabPreview with NoteDataDisplay in "Tab Playback" section
+- ✅ Fixed containerRef mounting issue - container must exist before alphaTab initialization
+- ⏳ **Next:** Transform raw data into practice insights (see detailed plan below)
+
+**Analysis Architecture:**
+
+**Phase 1: Note Frequency Analysis** ✅ IMPLEMENT NOW
+- Count note occurrences: "C4: 25 times, E4: 18 times, G4: 15 times..."
+- Show most/least common notes
+- Highlight notes that need extra practice
+- Simple aggregation of existing data
+
+**Phase 2: Chord Shape Detection** 🔲 PLACEHOLDER
+- Identify simultaneous or near-simultaneous notes (chords)
+- Group notes into chord shapes: "C major (x32010), G7 (320001)..."
+- Show suggested fingerings for each chord
+- Placeholder: Show "Potential chord at measure 4: C-E-G (C major triad)"
+- Future: Use music theory library (e.g., Tonal.js) for chord identification
+
+**Phase 3: Scale Pattern Detection** 🔲 PLACEHOLDER
+- Analyze melodic sequences (consecutive notes)
+- Identify scale patterns: "C major scale (measures 1-4), A minor pentatonic (measures 8-12)"
+- Show fretboard position diagrams for each scale
+- Placeholder: Show "Melodic sequence at measure 8: C-D-E-F-G (C major scale fragment)"
+- Future: Pattern matching against known scales, suggest optimal fingering positions
+
+**Phase 4: Progression Analysis** 🔲 PLACEHOLDER
+- Track chord/scale transitions
+- Identify common progressions: "I-IV-V in C major"
+- Suggest practice strategies: "Focus on C→F→G transition"
+- Placeholder: Show "Chord sequence: C major → F major → G major → C major"
+- Future: Roman numeral analysis, progression templates
+
+**Data Structure for Analysis:**
+```typescript
+interface PracticeAnalysis {
+  noteFrequency: { note: string; count: number; percentage: number }[]
+  chords: {
+    measure: number
+    time: number
+    notes: string[]
+    chordName?: string  // e.g., "C major"
+    shape?: string      // e.g., "x32010"
+    confidence: number  // 0-1, placeholder for future ML
+  }[]
+  scales: {
+    startMeasure: number
+    endMeasure: number
+    notes: string[]
+    scaleName?: string  // e.g., "C major scale"
+    position?: string   // e.g., "Position 1 (open position)"
+    confidence: number
+  }[]
+  progressions: {
+    chords: string[]
+    pattern?: string    // e.g., "I-IV-V"
+    key?: string        // e.g., "C major"
+  }[]
+}
+```
+
+**UI Design:**
+
+Replace raw table with collapsible analysis sections:
+```
+┌─────────────────────────────────────────────┐
+│ 🎵 Practice Analysis                        │
+├─────────────────────────────────────────────┤
+│ ▼ Note Frequency (25 unique notes)          │
+│   C4: ████████ 25 times (18%)               │
+│   E4: ██████ 18 times (13%)                 │
+│   G4: █████ 15 times (11%)                  │
+│   [Show all notes ▼]                        │
+├─────────────────────────────────────────────┤
+│ ▶ Chord Shapes (5 detected) [PLACEHOLDER]   │
+│   Click to expand...                        │
+├─────────────────────────────────────────────┤
+│ ▶ Scale Patterns (3 detected) [PLACEHOLDER] │
+│   Click to expand...                        │
+├─────────────────────────────────────────────┤
+│ ▶ Progressions (2 detected) [PLACEHOLDER]   │
+│   Click to expand...                        │
+└─────────────────────────────────────────────┘
+```
+
+**Phase 1 Implementation (Now):**
+- Keep existing note extraction logic
+- Add frequency aggregation
+- Replace table with frequency bar chart
+- Collapsible sections for future phases
+
+**Future Phase Implementation:**
+- Integrate Tonal.js for chord/scale detection
+- Add fretboard diagram component
+- Implement pattern matching algorithms
+- Add ML-based chord recognition (optional)
+
+**Code Locations:**
+- `frontend/src/components/Upload/NoteDataDisplay.tsx` → Rename to `PracticeAnalysisDisplay.tsx`
+- New: `frontend/src/lib/music-analysis.ts` - Analysis utilities (chord detection, scale matching)
+- New: `frontend/src/components/Upload/ChordShapeCard.tsx` - Show chord shapes with fingerings
+- New: `frontend/src/components/Upload/ScalePatternCard.tsx` - Show scale patterns with positions
+- New: `frontend/src/components/Upload/FretboardDiagram.tsx` - Visual fretboard component
 
 #### Staff → Full Playback Controls
 - ✅ Created `StaffPreview` component (clone of AlphaTabPreview with `staff-only` mode)
